@@ -55,7 +55,7 @@ enum GPUReader {
     /// 匹配 IOPCIDevice，返回第一张 model 含 "Radeon" 的 GPU 的完整属性字典。
     private static func pciDeviceProps() -> [String: Any]? {
         var it: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault,
+        guard IOServiceGetMatchingServices(kIOMasterPortDefault,
                                            IOServiceMatching("IOPCIDevice"), &it) == KERN_SUCCESS else {
             return nil
         }
@@ -79,7 +79,7 @@ enum GPUReader {
 
     static func readStats() -> GPUStats? {
         var it: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMainPortDefault,
+        guard IOServiceGetMatchingServices(kIOMasterPortDefault,
                                            IOServiceMatching("IOAccelerator"), &it) == KERN_SUCCESS else {
             return nil
         }

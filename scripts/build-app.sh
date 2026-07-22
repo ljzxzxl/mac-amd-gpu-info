@@ -1,18 +1,30 @@
 #!/bin/bash
-# 编译并组装 MacAMDGPUInfo.app。用 swiftc 直接编译，兼容仅装 Command Line Tools 的机器。
+# 编译并组装 MacAMDGPUInfo.app（通用二进制 x86_64 + arm64），
+# 用 swiftc 直接编译，兼容仅装 Command Line Tools 的机器。
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
 APP_NAME="MacAMDGPUInfo"
 EXEC="mac-amd-gpu-info"
 APP="build/$APP_NAME.app"
+DEPLOY="11.0"
 
-echo "[build-app] 编译 $EXEC ..."
-rm -rf "$APP"
-mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+echo "[build-app] 编译 $EXEC (通用二进制 x86_64 + arm64) ..."
+rm -rf "$APP" build/obj
+mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources" build/obj
 
-swiftc -O -o "$APP/Contents/MacOS/$EXEC" Sources/"$EXEC"/*.swift \
-    -framework AppKit -framework IOKit -framework Metal
+SLICES=()
+for arch in x86_64 arm64; do
+    echo "[build-app]   - 构建 $arch ..."
+    swiftc -O -target "${arch}-apple-macos${DEPLOY}" \
+        -o "build/obj/${EXEC}-${arch}" Sources/"$EXEC"/*.swift \
+        -framework AppKit -framework IOKit -framework Metal
+    SLICES+=("build/obj/${EXEC}-${arch}")
+done
+
+# 合并为通用二进制
+lipo -create "${SLICES[@]}" -output "$APP/Contents/MacOS/$EXEC"
+echo "[build-app] 架构: $(lipo -archs "$APP/Contents/MacOS/$EXEC")"
 
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 
@@ -32,7 +44,6 @@ if [ -f Resources/AppIcon.png ]; then
     sips -z 512 512   Resources/AppIcon.png --out "$ICONSET/icon_512x512.png"    >/dev/null
     cp Resources/AppIcon.png "$ICONSET/icon_512x512@2x.png"
     iconutil -c icns "$ICONSET" -o "$APP/Contents/Resources/AppIcon.icns"
-    # 同时保留一份 PNG 供运行时设置 Dock 图标
     cp Resources/AppIcon.png "$APP/Contents/Resources/AppIcon.png"
 fi
 
