@@ -88,7 +88,7 @@ final class StatusBarController: NSObject {
     /// 把若干「上值 / 下缩写」两行列并排绘制成与菜单栏等高的模板图（参照 gpu-fan-monitor 两行效果）。
     private func makeStackedImage(_ cols: [(value: String, label: String)]) -> NSImage? {
         guard !cols.isEmpty else { return nil }
-        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .medium)
         let labelFont = NSFont.systemFont(ofSize: 7, weight: .medium)
         let height = NSStatusBar.system.thickness
         let colGap: CGFloat = 6
@@ -109,7 +109,9 @@ final class StatusBarController: NSObject {
         let image = NSImage(size: NSSize(width: max(totalWidth, 1), height: height))
         image.lockFocus()
         let topLineH: CGFloat = 11, botLineH: CGFloat = 8, gap: CGFloat = -1
-        let startY = ((height - (topLineH + botLineH + gap)) / 2).rounded()
+        // 整体略向下移（非翻转坐标 y 越小越靠下），修正视觉偏上；如需再调改此 nudge。
+        let yNudge: CGFloat = -2
+        let startY = ((height - (topLineH + botLineH + gap)) / 2).rounded() + yNudge
         var x = sidePad
         let yBottom = startY
         let yTop = startY + topLineH + botLineH + gap
