@@ -1,36 +1,61 @@
 import AppKit
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    private var windowController: MainWindowController!
+    private var windowController: MainWindowController?
+    private var statusBar: StatusBarController!
     private let appName = "Mac AMD GPU Info"
-    private let versionString = "1.0"
+    private let versionString = "1.1"
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = buildMainMenu()
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Dock 图标（运行时设置，确保即时生效）
         if let path = Bundle.main.path(forResource: "AppIcon", ofType: "png"),
            let img = NSImage(contentsOfFile: path) {
             NSApp.applicationIconImage = img
         }
 
-        windowController = MainWindowController()
-        windowController.showWindow(nil)
+        statusBar = StatusBarController()
+        statusBar.onOpenWindow = { [weak self] in self?.showMainWindow() }
+
+        // 启动形态判定：开启状态栏 + 自启动 + 非激活（登录拉起）→ 纯状态栏模式，不弹窗
+        let launchedInBackground = !NSApp.isActive
+        let settings = StatusBarSettings.shared
+        if settings.enabled && settings.autostart && launchedInBackground {
+            NSApp.setActivationPolicy(.accessory)
+        } else {
+            showMainWindow()
+        }
+    }
+
+    private func showMainWindow() {
+        NSApp.setActivationPolicy(.regular)
+        if windowController == nil {
+            windowController = MainWindowController()
+        }
+        windowController?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        showMainWindow()
+        return true
+    }
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
-        true
+        // 状态栏开启时后台驻留（隐藏 Dock 图标），否则正常退出
+        if StatusBarSettings.shared.enabled {
+            NSApp.setActivationPolicy(.accessory)
+            return false
+        }
+        return true
     }
 
     // MARK: - 菜单
 
     private func buildMainMenu() -> NSMenu {
         let mainMenu = NSMenu()
-
-        // 应用菜单
         let appItem = NSMenuItem()
         mainMenu.addItem(appItem)
         let appMenu = NSMenu()
@@ -43,9 +68,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appMenu.addItem(verItem)
         appMenu.addItem(.separator())
         appMenu.addItem(withTitle: "退出 \(appName)", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
-
         appMenu.items.forEach { if $0.action == #selector(showAbout) { $0.target = self } }
-
         return mainMenu
     }
 
