@@ -22,6 +22,7 @@ enum GPUReader {
         info.vramMB = props["VRAM,totalMB"] as? Int
         info.pcieLink = pcieString(props["IOPCIExpressLinkStatus"] as? Int)
 
+        var vbiosMemoryType: String?
         if let bin = props["ATY,bin_image"] as? Data, !bin.isEmpty {
             info.vbiosBytes = bin
             let v = VBIOSDecoder.decode(bin)
@@ -32,6 +33,7 @@ enum GPUReader {
             info.subsystemString = v.subsystem
             info.memoryVendor = v.memoryVendor
             info.brand = v.brand
+            vbiosMemoryType = v.memoryType
         }
 
         if let did = info.deviceID, let spec = DeviceDatabase.spec(deviceID: did) {
@@ -49,6 +51,8 @@ enum GPUReader {
             info.dieSizeMM2 = spec.dieSizeMM2
             info.transistorsB = spec.transistorsB
         }
+        // 机型库未命中显存类型时，用 VBIOS 推断值兜底。
+        if info.vramType == nil { info.vramType = vbiosMemoryType }
         return info
     }
 

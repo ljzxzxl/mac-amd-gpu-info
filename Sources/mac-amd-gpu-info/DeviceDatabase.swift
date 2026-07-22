@@ -31,6 +31,11 @@ enum DeviceDatabase {
                            shaders: 1024, tmus: 64, rops: 16, computeUnits: 16, busWidthBit: 128,
                            vramType: "GDDR5", ratedCoreMHz: 1275, ratedMemMHz: 1750,
                            dieSizeMM2: 123, transistorsB: 3.0)
+        case 0x67FF: // Polaris 21：RX 550（P21 XT，本机 Sapphire 512 SP / 8 CU）
+            return GPUSpec(chip: "Polaris 21", architecture: "GCN 4.0", process: "14 nm",
+                           shaders: 512, tmus: 32, rops: 16, computeUnits: 8, busWidthBit: 128,
+                           vramType: "GDDR5", ratedCoreMHz: 1183, ratedMemMHz: 1750,
+                           dieSizeMM2: 123, transistorsB: 3.0)
         case 0x699F: // Polaris 12：RX 550
             return GPUSpec(chip: "Polaris 12", architecture: "GCN 4.0", process: "14 nm",
                            shaders: 640, tmus: 40, rops: 16, computeUnits: 10, busWidthBit: 128,

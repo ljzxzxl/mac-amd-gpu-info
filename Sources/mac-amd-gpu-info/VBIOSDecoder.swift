@@ -8,6 +8,7 @@ struct VBIOSInfo {
     var subsystem: String?
     var memoryVendor: String?
     var brand: String?
+    var memoryType: String?
 }
 
 /// 从 VBIOS 二进制里抽取可读铭牌信息（等价于对固件做一次 strings + 正则）。
@@ -16,14 +17,18 @@ enum VBIOSDecoder {
     static func decode(_ data: Data) -> VBIOSInfo {
         let text = asciiRuns(data)
         var info = VBIOSInfo()
-        info.partNumber = firstMatch(#"1\d{2}-[0-9A-Za-z]+-\d{3}"#, in: text)
+        // 料号末段可能是字母开头（如 113-34830M4-U02），故末段放宽为字母数字变长；保留 1\d{2}- 前缀避免误匹配日期。
+        info.partNumber = firstMatch(#"1\d{2}-[0-9A-Za-z]+-[0-9A-Za-z]{2,}"#, in: text)
         info.atomVersion = firstMatch(#"ATOMBIOSBK-AMD VER[0-9.]+"#, in: text)?
             .replacingOccurrences(of: "ATOMBIOSBK-AMD VER", with: "")
         info.date = firstMatch(#"\d{2}/\d{2}/\d{2} \d{2}:\d{2}"#, in: text)
 
         let lines = text.components(separatedBy: "\n")
-        info.board = lines.first { $0.contains("Polaris") || $0.contains("Navi") || $0.contains("Vega") }?
-            .trimmingCharacters(in: .whitespaces)
+        // 板卡标识大小写不敏感（真实串为全大写 POLARIS21），展示时保留原始大小写。
+        info.board = lines.first {
+            let u = $0.uppercased()
+            return u.contains("POLARIS") || u.contains("NAVI") || u.contains("VEGA")
+        }?.trimmingCharacters(in: .whitespaces)
         info.subsystem = lines.first { $0.contains("config.h") }?
             .components(separatedBy: "\\").first?
             .trimmingCharacters(in: .whitespaces)
@@ -33,6 +38,13 @@ enum VBIOSDecoder {
 
         let brands = ["SAPPHIRE", "POWERCOLOR", "ASUS", "MSI", "GIGABYTE", "XFX", "HIS", "VISIONTEK", "DATALAND", "YESTON"]
         info.brand = brands.first { text.uppercased().contains($0) }?.capitalized
+
+        // 显存类型推断：机型库未命中时的兜底来源（本卡子系统含 GD5 → GDDR5）。
+        let up = text.uppercased()
+        if up.contains("GDDR6") { info.memoryType = "GDDR6" }
+        else if up.contains("GDDR5") || up.contains("GD5") { info.memoryType = "GDDR5" }
+        else if up.contains("HBM2") { info.memoryType = "HBM2" }
+        else if up.contains("HBM") { info.memoryType = "HBM" }
         return info
     }
 

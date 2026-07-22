@@ -1,6 +1,6 @@
 # Mac AMD GPU Info — 交接文档 (ONBOARDING)
 
-> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目，并继续修复"当前待办问题"（RX 550 / `0x67FF` 信息识别不全）。
+> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目。原"当前待办问题"（RX 550 / `0x67FF` 信息识别不全）已在 `v1.1.1` 修复，详见第 6 节。
 
 ---
 
@@ -9,7 +9,7 @@
 macOS 下没有 GPU-Z，本项目是面向 **Intel Mac（含黑苹果）+ AMD 独显** 的「GPU 信息查看 + 传感器实时监控」桌面应用（对标 GPU-Z + 腾讯柠檬状态栏）。纯 **只读、无需 root、不联网、不改系统设置**。
 
 - 仓库：`git@github.com:ljzxzxl/mac-amd-gpu-info.git`（分支 `main`，默认推送 `origin`）
-- 已发布：`v1.0.0`（信息 + 传感器），`v1.1.0`（新增状态栏）
+- 已发布：`v1.0.0`（信息 + 传感器），`v1.1.0`（新增状态栏），`v1.1.1`（RX 550 `0x67FF` 识别修复）
 - 语言/UI：Swift + AppKit（无 SwiftUI、无 Storyboard，纯代码构建）
 
 ### 背景结论（重要）
@@ -80,32 +80,39 @@ bash packaging/make-dmg.sh      # 生成 dist/ 下 DMG + SHA256
 
 ---
 
-## 6. 【当前待办问题】RX 550 (0x67FF) 信息识别不全
+## 6. 【已修复 v1.1.1】RX 550 (0x67FF) 信息识别不全
 
-一台另外的 macOS 26.5.2 设备（Sapphire RX 550，`device-id 0x67FF`）导出的信息里，部分字段缺失。**已定位的根因与修复方向：**
+Sapphire RX 550（`device-id 0x67FF`，`revision 0xFF`）此前部分字段缺失。已在**本机**（该卡即开发机显卡）通过 `ioreg` 导出真实 VBIOS 校准并修复，实测字段齐全。
 
-### 根因
-1. **机型库缺 `0x67FF`**：`DeviceDatabase` 目前只有 `0x67DF / 0x67EF / 0x699F / 0x687F / 0x731F`。→ 芯片/架构/制程/流处理器/TMU/ROP/计算单元/额定频率/芯片规模/**显存类型/位宽** 全部"未知/—"（这些都只来自机型库）。
-2. **VBIOS 料号、板卡标识没匹配到**（其它 VBIOS 字段如 ATOMBIOS 版本/日期/子系统/颗粒厂商 Micron/品牌 Sapphire 都正常）：
-   - 料号正则 `1\d{2}-[0-9A-Za-z]+-\d{3}` 未命中该卡格式；
-   - 板卡标识按大小写敏感的 `Polaris` 查找，而该卡串是全大写 `POLARIS21` → 未命中。
-3. `revision 0xFF` 偏异常（疑似黑苹果占位/伪装），不影响查库（只用 device-id）。
+### 真实取证结论（本机 ioreg + strings）
 
-### 修复方向（在那台有真实 VBIOS 的机器上做）
-1. **`DeviceDatabase` 补 `0x67FF`**（RX 550 / Polaris 21：GCN4.0、14nm、512 或 640 SP、位宽 128-bit、GDDR5 等，按实际型号填）。
+| 项 | 真实值 |
+|---|---|
+| model / device-id / revision | AMD Radeon RX 550 / `0x67FF` / `0xFF` |
+| 料号 | `113-34830M4-U02`（末段 `U02` 字母开头 → 旧正则 `\d{3}` 命中失败根因） |
+| 板卡标识 | `POLARIS21`（全大写 → 旧大小写敏感匹配失败根因） |
+| 子系统 | `SAPPHIRE_POLARIS21_3E348030_NEW_GD5_4G_MICRON` |
+| 显存 | GDDR5（含 `GD5`）、128-bit（256Mx32 ×4 = 4GB）、Micron |
+| 芯片串 | `P21 XT`（Polaris 21）、ATOMBIOS VER015.050.002.001.000000、日期 04/19/17 |
+
+### 已落地的修复
+
+1. **`DeviceDatabase` 新增 `0x67FF`**（Polaris 21 / RX 550：GCN 4.0、14nm、512 SP、8 CU、32 TMU、16 ROP、128-bit、GDDR5、额定 1183/1750 MHz、123mm²/3.0B）。
+   > 注：0x67FF 坊间有 512/640 SP 两版，VBIOS 铭牌 `P21 XT` 不含使能 CU 数，SP/CU/TMU 取典型 512 SP 作"型号参考值"；如遇 640 SP 实机仅需调这三个数值。
 2. **`VBIOSDecoder` 增强**：
-   - 板卡标识关键字改**大小写不敏感**（`POLARIS21` 也能命中）；
-   - 料号正则放宽以适配该卡真实格式；
-   - **显存类型加兜底**：机型库未命中时，从 VBIOS/子系统串的 `GD5`(=GDDR5)/`GDDR5`/`GDDR6` 推断（本卡子系统 `..._GD5_4G_MICRON` 就含 GD5）。
-3. 回归确认对现有 RX 580（`0x67DF`）无副作用；相应升版本（建议 `v1.1.1`）。
+   - 板卡标识匹配改**大小写不敏感**（命中 `POLARIS21`，展示保留原始大小写）；
+   - 料号正则末段由 `\d{3}` 放宽为 `[0-9A-Za-z]{2,}`（兼容 `113-34830M4-U02`），仍保留 `1\d{2}-` 前缀避免误匹配日期；
+   - `VBIOSInfo` 新增 `memoryType`，按 GDDR6/GDDR5(GD5)/HBM2/HBM 关键字推断。
+3. **`GPUReader.readInfo()` 显存类型兜底**：机型库未命中 `vramType` 时用 VBIOS 推断值兜底。
+4. 已确认对现有 RX 580（`0x67DF`）无回归；版本升至 `v1.1.1`。
 
-### 获取该卡真实 VBIOS 字符串的命令（在那台机器执行）
+### 排错手法留存（获取该卡真实 VBIOS 字符串）
 ```bash
 ioreg -rw0 -c IOPCIDevice | grep -o '"ATY,bin_image" = <[0-9a-f]*>' | head -1 \
 | sed 's/.*<//;s/>//' | xxd -r -p | strings -n 4 \
 | grep -iE "113-|polaris|gddr|micron|[0-9]{2}/[0-9]{2}/[0-9]{2}"
 ```
-或用应用「信息」页的 **导出 VBIOS…** 存出 `.rom` 再分析。看清真实"料号/板卡标识"格式后，据此调正则/关键字即可。
+或用应用「信息」页的 **导出 VBIOS…** 存出 `.rom` 再分析。新增其它显卡时，据此看清真实"料号/板卡标识"格式再调库/正则。
 
 ---
 
