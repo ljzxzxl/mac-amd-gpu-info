@@ -42,7 +42,7 @@ enum GPUReader {
     /// 首张 Radeon 的静态信息（无卡时返回占位）。
     static func readInfo() -> GPUInfo {
         readAllInfos().first ?? {
-            var info = GPUInfo(modelName: "未检测到 AMD 独显（RadeonX4000 家族）")
+            var info = GPUInfo(modelName: "未检测到 AMD 独显")
             info.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
             info.metalSupport = metalSupport()
             return info
@@ -116,6 +116,8 @@ enum GPUReader {
 
     // MARK: - 传感器
 
+    /// 无指定卡时的兜底：返回系统中第一张 AMD accelerator 的传感器读数。
+    /// 正常路径请用 readStats(pciRegistryID:) 精确读取选中卡，避免多卡串号。
     static func readStats() -> GPUStats? {
         var it: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMasterPortDefault,

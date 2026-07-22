@@ -4,7 +4,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: MainWindowController?
     private var statusBar: StatusBarController!
     private let appName = "Mac AMD GPU Info"
-    private let versionString = "1.1"
+    // 版本号统一从 Bundle 的 CFBundleShortVersionString 读取，避免与 Info.plist/VERSION 漂移。
+    private let versionString = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.2"
 
     func applicationWillFinishLaunching(_ notification: Notification) {
         NSApp.mainMenu = buildMainMenu()
