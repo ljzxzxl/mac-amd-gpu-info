@@ -1,66 +1,133 @@
 import AppKit
 
-/// 简易折线图：两条 0–100 归一化曲线（温度、GPU 活跃度），环形缓冲。
+/// 单张折线图配置里的一条曲线。
+struct GraphSeries {
+    let label: String
+    let color: NSColor
+    let maxValue: Double
+    let unit: String
+}
+
+/// 通用折线图：顶部独立图例带（含当前值，不与曲线重叠），曲线带半透明填充，左侧刻度。
 final class SensorGraphView: NSView {
 
     private let capacity = 120
-    private var temp: [Double] = []
-    private var activity: [Double] = []
+    private var configs: [GraphSeries] = []
+    private var buffers: [[Double]] = []
 
-    private let tempColor = NSColor.systemRed
-    private let actColor = NSColor.systemBlue
+    /// 该曲线的含义备注，显示在图例右侧，并作为 hover 提示。
+    var note: String = "" {
+        didSet { toolTip = note; needsDisplay = true }
+    }
 
-    func append(temp t: Double?, activity a: Double?) {
-        push(&temp, t)
-        push(&activity, a)
+    private let headerH: CGFloat = 16
+    private let leftPad: CGFloat = 34
+    private let pad: CGFloat = 5
+
+    func configure(_ series: [GraphSeries]) {
+        configs = series
+        buffers = series.map { _ in [] }
         needsDisplay = true
     }
 
-    private func push(_ arr: inout [Double], _ v: Double?) {
-        arr.append(max(0, min(100, v ?? 0)))
-        if arr.count > capacity { arr.removeFirst(arr.count - capacity) }
+    func push(_ values: [Double?]) {
+        for (i, v) in values.enumerated() where i < buffers.count {
+            buffers[i].append(max(0, v ?? 0))
+            if buffers[i].count > capacity { buffers[i].removeFirst(buffers[i].count - capacity) }
+        }
+        needsDisplay = true
     }
 
     override func draw(_ dirtyRect: NSRect) {
         NSColor.textBackgroundColor.setFill()
         bounds.fill()
 
-        let inset: CGFloat = 4
-        let plot = bounds.insetBy(dx: inset, dy: inset)
+        drawLegend()
 
-        // 网格线（0/25/50/75/100）
-        NSColor.gridColor.setStroke()
-        for f in stride(from: 0.0, through: 1.0, by: 0.25) {
-            let y = plot.minY + plot.height * CGFloat(f)
+        let plot = NSRect(x: bounds.minX + leftPad, y: bounds.minY + pad,
+                          width: bounds.width - leftPad - pad,
+                          height: bounds.height - headerH - pad * 2)
+        guard plot.width > 0, plot.height > 0 else { return }
+
+        drawGrid(plot)
+        for (i, cfg) in configs.enumerated() { drawSeries(buffers[i], cfg: cfg, in: plot) }
+    }
+
+    private func drawLegend() {
+        let y = bounds.maxY - headerH + 1
+        var x = bounds.minX + leftPad
+        for (i, cfg) in configs.enumerated() {
+            cfg.color.setFill()
+            NSBezierPath(roundedRect: NSRect(x: x, y: y + 2, width: 9, height: 9), xRadius: 2, yRadius: 2).fill()
+            let latest = buffers[i].last
+            let text = latest.map { "\(cfg.label) \(Int($0)) \(cfg.unit)" } ?? cfg.label
+            let s = NSAttributedString(string: text, attributes: [
+                .font: NSFont.systemFont(ofSize: 10),
+                .foregroundColor: NSColor.secondaryLabelColor,
+            ])
+            s.draw(at: NSPoint(x: x + 13, y: y))
+            x += 13 + s.size().width + 16
+        }
+
+        // 右侧含义备注
+        if !note.isEmpty {
+            let attr: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 9),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+            let n = NSAttributedString(string: note, attributes: attr)
+            let nx = bounds.maxX - n.size().width - 6
+            if nx > x { n.draw(at: NSPoint(x: nx, y: y + 1)) }
+        }
+    }
+
+    private func drawGrid(_ plot: NSRect) {
+        for f in stride(from: 0.0, through: 1.0, by: 0.5) {
+            let yy = plot.minY + plot.height * CGFloat(f)
+            NSColor.gridColor.withAlphaComponent(0.5).setStroke()
             let p = NSBezierPath()
-            p.move(to: NSPoint(x: plot.minX, y: y))
-            p.line(to: NSPoint(x: plot.maxX, y: y))
+            p.move(to: NSPoint(x: plot.minX, y: yy))
+            p.line(to: NSPoint(x: plot.maxX, y: yy))
             p.lineWidth = 0.5
             p.stroke()
         }
-
-        drawSeries(temp, color: tempColor, in: plot)
-        drawSeries(activity, color: actColor, in: plot)
-
-        // 图例
-        let legend = NSMutableAttributedString()
-        legend.append(NSAttributedString(string: "■ 温度  ", attributes: [.foregroundColor: tempColor, .font: NSFont.systemFont(ofSize: 10)]))
-        legend.append(NSAttributedString(string: "■ GPU 活跃度", attributes: [.foregroundColor: actColor, .font: NSFont.systemFont(ofSize: 10)]))
-        legend.draw(at: NSPoint(x: plot.minX + 4, y: plot.maxY - 14))
+        if let maxV = configs.first?.maxValue {
+            let attr: [NSAttributedString.Key: Any] = [
+                .font: NSFont.systemFont(ofSize: 8),
+                .foregroundColor: NSColor.tertiaryLabelColor,
+            ]
+            for f in [0.0, 0.5, 1.0] {
+                let yy = plot.minY + plot.height * CGFloat(f)
+                NSAttributedString(string: "\(Int(maxV * f))", attributes: attr)
+                    .draw(at: NSPoint(x: bounds.minX + 3, y: yy - 5))
+            }
+        }
     }
 
-    private func drawSeries(_ data: [Double], color: NSColor, in plot: NSRect) {
-        guard data.count > 1 else { return }
-        color.setStroke()
-        let path = NSBezierPath()
-        path.lineWidth = 1.5
+    private func drawSeries(_ data: [Double], cfg: GraphSeries, in plot: NSRect) {
+        guard data.count > 1, cfg.maxValue > 0 else { return }
         let stepX = plot.width / CGFloat(capacity - 1)
-        for (i, v) in data.enumerated() {
-            let x = plot.minX + stepX * CGFloat(i)
-            let y = plot.minY + plot.height * CGFloat(v / 100.0)
-            let pt = NSPoint(x: x, y: y)
-            if i == 0 { path.move(to: pt) } else { path.line(to: pt) }
+        func pt(_ i: Int, _ v: Double) -> NSPoint {
+            NSPoint(x: plot.minX + stepX * CGFloat(i),
+                    y: plot.minY + plot.height * CGFloat(min(1.0, v / cfg.maxValue)))
         }
-        path.stroke()
+
+        let fill = NSBezierPath()
+        fill.move(to: NSPoint(x: pt(0, data[0]).x, y: plot.minY))
+        for (i, v) in data.enumerated() { fill.line(to: pt(i, v)) }
+        fill.line(to: NSPoint(x: pt(data.count - 1, data[data.count - 1]).x, y: plot.minY))
+        fill.close()
+        cfg.color.withAlphaComponent(0.12).setFill()
+        fill.fill()
+
+        let line = NSBezierPath()
+        line.lineWidth = 1.5
+        line.lineJoinStyle = .round
+        for (i, v) in data.enumerated() {
+            let p = pt(i, v)
+            if i == 0 { line.move(to: p) } else { line.line(to: p) }
+        }
+        cfg.color.setStroke()
+        line.stroke()
     }
 }

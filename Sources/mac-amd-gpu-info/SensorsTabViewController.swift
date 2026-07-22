@@ -1,30 +1,96 @@
 import AppKit
 
-/// 传感器页：每秒轮询实时数值 + 温度/活跃度历史曲线。
+/// 传感器页：顶部实时数值（与信息页同款输入框样式）+ 六张带含义备注的曲线。
 final class SensorsTabViewController: NSViewController {
 
-    private let valueField = NSTextField(labelWithString: "")
-    private let graph = SensorGraphView(frame: .zero)
+    private struct Metric {
+        let label: String
+        let box: CopyableLabel
+        let get: (GPUStats) -> String
+    }
+
+    private let topView = FlippedView()
+    private var metrics: [Metric] = []
+
+    private let stack = NSStackView()
+    private let gTemp = SensorGraphView()
+    private let gAct = SensorGraphView()
+    private let gUtil = SensorGraphView()
+    private let gPower = SensorGraphView()
+    private let gFan = SensorGraphView()
+    private let gVRAM = SensorGraphView()
     private var timer: Timer?
 
+    private let vramTotalMB = 4096.0
+
     override func loadView() {
-        let container = NSView(frame: NSRect(x: 0, y: 0, width: 540, height: 552))
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 600))
 
-        valueField.frame = NSRect(x: 16, y: 300, width: 508, height: 236)
-        valueField.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        valueField.maximumNumberOfLines = 0
-        valueField.autoresizingMask = [.width, .minYMargin]
-        valueField.lineBreakMode = .byWordWrapping
-        container.addSubview(valueField)
+        // 顶部实时数值网格（输入框样式，与信息页统一）
+        topView.frame = NSRect(x: 12, y: 508, width: 536, height: 84)
+        topView.autoresizingMask = [.width, .minYMargin]
+        container.addSubview(topView)
+        buildMetrics()
+        layoutMetrics()
 
-        graph.frame = NSRect(x: 16, y: 16, width: 508, height: 270)
-        graph.autoresizingMask = [.width, .height]
-        graph.wantsLayer = true
-        graph.layer?.borderWidth = 1
-        graph.layer?.borderColor = NSColor.gridColor.cgColor
-        container.addSubview(graph)
+        // 曲线区
+        stack.orientation = .vertical
+        stack.distribution = .fillEqually
+        stack.spacing = 6
+        stack.frame = NSRect(x: 12, y: 12, width: 536, height: 488)
+        stack.autoresizingMask = [.width, .height]
+        for g in [gTemp, gAct, gUtil, gPower, gFan, gVRAM] {
+            g.wantsLayer = true
+            g.layer?.borderWidth = 1
+            g.layer?.borderColor = NSColor.gridColor.cgColor
+            g.layer?.cornerRadius = 4
+            stack.addArrangedSubview(g)
+        }
+        container.addSubview(stack)
+
+        gTemp.configure([GraphSeries(label: "温度", color: .systemRed, maxValue: 100, unit: "°C")])
+        gTemp.note = "GPU 核心温度"
+        gAct.configure([GraphSeries(label: "GPU 活跃度", color: .systemBlue, maxValue: 100, unit: "%")])
+        gAct.note = "瞬时引擎繁忙度（采样值，会跳动）"
+        gUtil.configure([GraphSeries(label: "占用", color: .systemTeal, maxValue: 100, unit: "%")])
+        gUtil.note = "设备占用（时间窗口平均，较平滑）"
+        gPower.configure([GraphSeries(label: "功耗", color: .systemOrange, maxValue: 250, unit: "W")])
+        gPower.note = "整卡总功耗"
+        gFan.configure([GraphSeries(label: "风扇", color: .systemGreen, maxValue: 2500, unit: "RPM")])
+        gFan.note = "显卡风扇转速"
+        gVRAM.configure([GraphSeries(label: "显存占用", color: .systemPurple, maxValue: vramTotalMB, unit: "MB")])
+        gVRAM.note = "已用显存 / \(Int(vramTotalMB)) MB"
 
         self.view = container
+    }
+
+    private func buildMetrics() {
+        func f(_ v: Int?, _ u: String) -> String { v.map { "\($0) \(u)" } ?? "—" }
+        metrics = [
+            Metric(label: "温度", box: UI.valueBox("—")) { f($0.tempC, "°C") },
+            Metric(label: "核心", box: UI.valueBox("—")) { f($0.coreMHz, "MHz") },
+            Metric(label: "显存", box: UI.valueBox("—")) { f($0.memMHz, "MHz") },
+            Metric(label: "活跃", box: UI.valueBox("—")) { f($0.activityPct, "%") },
+            Metric(label: "占用", box: UI.valueBox("—")) { f($0.deviceUtilPct, "%") },
+            Metric(label: "功耗", box: UI.valueBox("—")) { f($0.powerW, "W") },
+            Metric(label: "风扇", box: UI.valueBox("—")) { "\(f($0.fanRPM, "RPM"))\($0.fanPct.map { " (\($0)%)" } ?? "")" },
+            Metric(label: "显存占用", box: UI.valueBox("—")) { f($0.vramInUseMB, "MB") },
+        ]
+    }
+
+    private func layoutMetrics() {
+        let cols = 3
+        let cellW = topView.frame.width / CGFloat(cols)
+        for (i, m) in metrics.enumerated() {
+            let r = i / cols, c = i % cols
+            let x = CGFloat(c) * cellW
+            let yy = CGFloat(r) * 26 + 4
+            let lab = UI.label(m.label, size: 11, color: .secondaryLabelColor)
+            lab.frame = NSRect(x: x, y: yy + 3, width: 42, height: 15)
+            topView.addSubview(lab)
+            m.box.frame = NSRect(x: x + 44, y: yy, width: cellW - 50, height: 21)
+            topView.addSubview(m.box)
+        }
     }
 
     func start() {
@@ -36,27 +102,18 @@ final class SensorsTabViewController: NSViewController {
 
     @objc private func refresh() {
         guard isViewLoaded else { return }
-        guard let s = GPUReader.readStats() else {
-            valueField.stringValue = "未检测到 AMD 独显（RadeonX4000 家族）"
-            return
+        let stats = GPUReader.readStats()
+        for m in metrics {
+            let v = stats.map { m.get($0) } ?? "—"
+            m.box.stringValue = v
+            m.box.toolTip = v
         }
-        func f(_ v: Int?, _ unit: String) -> String { v.map { "\($0) \(unit)" } ?? "—" }
-        let vram: String = {
-            guard let used = s.vramInUseMB else { return "—" }
-            return "\(used) MB 使用"
-        }()
-
-        valueField.stringValue = """
-        温度        \(f(s.tempC, "°C"))
-        核心频率    \(f(s.coreMHz, "MHz"))
-        显存频率    \(f(s.memMHz, "MHz"))
-        GPU 活跃度  \(f(s.activityPct, "%"))
-        设备占用    \(f(s.deviceUtilPct, "%"))
-        功耗        \(f(s.powerW, "W"))
-        风扇        \(f(s.fanRPM, "RPM"))\(s.fanPct.map { " (\($0)%)" } ?? "")
-        显存占用    \(vram)
-        """
-
-        graph.append(temp: s.tempC.map(Double.init), activity: s.activityPct.map(Double.init))
+        let s = stats ?? GPUStats()
+        gTemp.push([s.tempC.map(Double.init)])
+        gAct.push([s.activityPct.map(Double.init)])
+        gUtil.push([s.deviceUtilPct.map(Double.init)])
+        gPower.push([s.powerW.map(Double.init)])
+        gFan.push([s.fanRPM.map(Double.init)])
+        gVRAM.push([s.vramInUseMB.map(Double.init)])
     }
 }
