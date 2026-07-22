@@ -1,15 +1,15 @@
 # Mac AMD GPU Info — 交接文档 (ONBOARDING)
 
-> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目。原"当前待办问题"（RX 550 / `0x67FF` 信息识别不全）已在 `v1.1.1` 修复（第 6 节）；`v1.2.0` 新增**多显卡切换**（第 7 节）；`v1.2.1` 顶栏改为**两行样式**（第 8 节）。
+> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目。原"当前待办问题"（RX 550 / `0x67FF` 信息识别不全）已在 `v1.1.1` 修复（第 6 节）；`v1.2.0` 新增**多显卡切换**（第 7 节）；`v1.2.1` 顶栏改为**两行样式**（第 8 节）；`v1.3.0` 新增**自动检查更新**（第 9 节）。
 
 ---
 
 ## 1. 项目是什么
 
-macOS 下没有 GPU-Z，本项目是面向 **Intel Mac（含黑苹果）+ AMD 独显** 的「GPU 信息查看 + 传感器实时监控」桌面应用（对标 GPU-Z + 腾讯柠檬状态栏）。纯 **只读、无需 root、不联网、不改系统设置**。
+macOS 下没有 GPU-Z，本项目是面向 **Intel Mac（含黑苹果）+ AMD 独显** 的「GPU 信息查看 + 传感器实时监控」桌面应用（对标 GPU-Z + 腾讯柠檬状态栏）。纯 **只读、无需 root、不改系统设置**（仅在检查更新时访问 GitHub Releases）。
 
 - 仓库：`git@github.com:ljzxzxl/mac-amd-gpu-info.git`（分支 `main`，默认推送 `origin`）
-- 已发布：`v1.0.0`（信息 + 传感器），`v1.1.0`（新增状态栏），`v1.1.1`（RX 550 `0x67FF` 识别修复），`v1.2.0`（多显卡切换），`v1.2.1`（顶栏两行样式）
+- 已发布：`v1.0.0`（信息 + 传感器），`v1.1.0`（新增状态栏），`v1.1.1`（RX 550 `0x67FF` 识别修复），`v1.2.0`（多显卡切换），`v1.2.1`（顶栏两行样式），`v1.3.0`（自动检查更新）
 - 语言/UI：Swift + AppKit（无 SwiftUI、无 Storyboard，纯代码构建）
 
 ### 背景结论（重要）
@@ -39,7 +39,7 @@ bash packaging/make-dmg.sh      # 生成 dist/ 下 DMG + SHA256
 | 文件 | 职责 |
 |---|---|
 | `main.swift` | 入口，`NSApplication` + AppDelegate |
-| `AppDelegate.swift` | 生命周期、主菜单/关于(版本号从 Bundle 的 `CFBundleShortVersionString` 读取，勿硬编码)、Dock 图标、状态栏控制器、启动形态判定 |
+| `AppDelegate.swift` | 生命周期、主菜单/关于(版本号从 Bundle 的 `CFBundleShortVersionString` 读取，勿硬编码)、Dock 图标、状态栏控制器、启动形态判定、**启动静默检查更新 + 菜单「检查更新…」** |
 | `MainWindowController.swift` | `NSWindow` + `NSTabView`（信息/传感器/状态栏 三标签）、**窗口高度自适应**；启动枚举多卡并注入选中回调 |
 | `GPUModels.swift` | `GPUInfo`（静态，含每卡唯一键 `registryID`/`pciLocation`）与 `GPUStats`（传感器）数据模型 |
 | `GPUReader.swift` | **IOKit 读取核心**：多卡枚举 `readAllInfos()` + 按卡传感器 `readStats(pciRegistryID:)` + PCIe + Metal + 品牌兜底 |
@@ -51,9 +51,10 @@ bash packaging/make-dmg.sh      # 生成 dist/ 下 DMG + SHA256
 | `SensorGraphView.swift` | 自绘折线图（环形缓冲、图例带含义备注、半透明填充） |
 | `StatusBarMetric.swift` | 状态栏 8 指标定义（`abbr` 英文缩写 / `value` 带单位值 / `detailText` 明细） |
 | `StatusBarSettings.swift` | 状态栏设置（UserDefaults + 变更通知） |
-| `StatusBarController.swift` | `NSStatusItem` **两行样式模板图**刷新（上值下缩写 + 暗色分隔竖线）+ 下拉菜单（2s）；**跟随选中卡**（回退首张） |
+| `StatusBarController.swift` | `NSStatusItem` **两行样式模板图**刷新（上值下缩写 + 暗色分隔竖线）+ 下拉菜单（2s，含「检查更新…」）；**跟随选中卡**（回退首张） |
 | `StatusBarTabViewController.swift` | 「状态栏」标签页：主开关 + 8 指标开关 + 自启动开关 |
 | `LoginItem.swift` | `SMAppService` 登录自启动封装 |
+| `Updater.swift` | **检查更新**：查询 GitHub `releases/latest`、语义版本比较、下载 DMG 到「下载」并 `NSWorkspace.open` 打开安装窗 |
 | `UIComponents.swift` | `CopyableLabel`（右键复制）、`FlippedView`、`UI.label`/`UI.valueBox` 工厂 |
 
 ---
@@ -152,7 +153,19 @@ ioreg -rw0 -c IOPCIDevice | grep -o '"ATY,bin_image" = <[0-9a-f]*>' | head -1 \
 - **渲染**：`StatusBarController.makeStackedImage()` 把各列绘成一张与菜单栏等高的**模板图**（`isTemplate=true`），竖直方向按总高精确居中，避免多行文字被基线顶偏。值 11pt 等宽数字半粗、缩写 7pt，列间距 `colGap=6`。
 - **分隔竖线**：相邻列间画 1px 竖线；因模板图只按 alpha 取菜单栏色，用 `NSColor.black.withAlphaComponent(0.30)` 实现"比文字更暗"的分隔（想更深/更淡改这个 alpha；想更宽间距改 `colGap`）。
 
-## 9. 验证清单（改完自检）
+## 9. 【v1.3.0】自动检查更新
+
+参照 charge-limit-helper 的"检查 Releases→提示→跳转下载"，并增强为"一键下载并打开安装窗"。全部用系统能力（`URLSession` + `NSWorkspace` + `NSAlert`），无第三方依赖、无 Sparkle。
+
+- **数据源**：GitHub `https://api.github.com/repos/ljzxzxl/mac-amd-gpu-info/releases/latest`（公开免鉴权，请求需带 `User-Agent` 头）。取 `tag_name` / `assets[].browser_download_url`(.dmg) / `html_url`。
+- **版本比较**：`Updater.isNewer`，去掉 tag 的 `v` 前缀后按 `.` 分段数值比较。当前版本取 `Bundle` 的 `CFBundleShortVersionString`。
+- **时机**：`AppDelegate.applicationDidFinishLaunching` 启动**静默检查**（仅有新版才弹窗）；应用菜单与状态栏菜单的「检查更新…」为**手动检查**（有新版 / 已最新 / 失败 三态弹窗）。`isCheckingUpdate` 状态位防重复。
+- **引导下载**：`Updater.downloadAndOpen` 用 `downloadTask` 存到 `~/Downloads` 后 `NSWorkspace.open(dmg)` 自动挂载弹出安装窗；无 dmg 资产或下载失败则打开 `html_url` 发行页兜底。
+- **未做真·一键自动替换**：ad-hoc 未签名下替换运行中 App 有 Gatekeeper 隔离/自替换风险；采用"下载并打开 DMG 引导拖入"的稳健折中。
+- **隐私**：仅检查更新时向 GitHub 发只读 GET，不上传任何数据；关于面板/README 表述已相应更新。
+- **网络权限**：应用**非沙盒**，`URLSession` 出站请求无需额外 entitlement。
+
+## 10. 验证清单（改完自检）
 
 - `bash scripts/build-app.sh` 通过；`lipo -info` 显示 `x86_64 arm64`。
 - `open` 后无崩溃；三标签页正常。
@@ -161,8 +174,9 @@ ioreg -rw0 -c IOPCIDevice | grep -o '"ATY,bin_image" = <[0-9a-f]*>' | head -1 \
 - 传感器六曲线正常刷新；状态栏开关/指标/自启动可用。
 - **多卡**：下拉框列出全部卡；切换后信息页/传感器页/状态栏均正确切换、互不串号；Navi 卡传感器正常、品牌显示 AIB 厂商。
 - **顶栏两行**：开启状态栏后每指标显示两行（上值下缩写）、列间有暗色竖线、整体竖直居中不溢出。
+- **检查更新**：菜单/状态栏「检查更新…」三态正常；发现新版可下载并弹出安装窗（本机版本高于线上时，启动不弹更新属正常）。
 
-## 10. 约定
+## 11. 约定
 
 - 提交信息用中文、说明动机；只改必要文件；不引入 SwiftUI/Xcode 依赖。
 - 发布走 tag（`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`），CI 自动出 DMG Release。
