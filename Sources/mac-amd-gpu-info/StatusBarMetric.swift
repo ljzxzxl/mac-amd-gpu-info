@@ -18,31 +18,31 @@ enum StatusBarMetric: String, CaseIterable {
         }
     }
 
-    /// 状态栏并排显示用的单字前缀（区分多个百分比）
-    var prefix: String {
+    /// 状态栏两行样式里“下面那行”的英文缩写标签
+    var abbr: String {
         switch self {
-        case .temp: return "温"
-        case .fan: return "扇"
-        case .power: return "功"
-        case .activity: return "活"
-        case .util: return "占"
-        case .vram: return "显"
-        case .coreClk: return "核"
-        case .memClk: return "频"
+        case .temp: return "TEMP"
+        case .fan: return "FAN"
+        case .power: return "PWR"
+        case .activity: return "ACT"
+        case .util: return "UTIL"
+        case .vram: return "VRAM"
+        case .coreClk: return "CORE"
+        case .memClk: return "MEM"
         }
     }
 
-    /// 状态栏紧凑文本；数据缺失返回 nil（不并入状态栏）
-    func statusText(_ s: GPUStats) -> String? {
+    /// 状态栏两行样式里“上面那行”的数值（带单位；数据缺失返回 nil）
+    func value(_ s: GPUStats) -> String? {
         switch self {
-        case .temp: return s.tempC.map { "\(prefix)\($0)°C" }
-        case .fan: return s.fanRPM.map { "\(prefix)\($0)" }
-        case .power: return s.powerW.map { "\(prefix)\($0)W" }
-        case .activity: return s.activityPct.map { "\(prefix)\($0)%" }
-        case .util: return s.deviceUtilPct.map { "\(prefix)\($0)%" }
-        case .vram: return s.vramInUseMB.map { "\(prefix)\($0)M" }
-        case .coreClk: return s.coreMHz.map { "\(prefix)\($0)" }
-        case .memClk: return s.memMHz.map { "\(prefix)\($0)" }
+        case .temp: return s.tempC.map { "\($0)°C" }
+        case .fan: return s.fanRPM.map { "\($0)" }
+        case .power: return s.powerW.map { "\($0)W" }
+        case .activity: return s.activityPct.map { "\($0)%" }
+        case .util: return s.deviceUtilPct.map { "\($0)%" }
+        case .vram: return s.vramInUseMB.map { "\($0)M" }
+        case .coreClk: return s.coreMHz.map { "\($0)" }
+        case .memClk: return s.memMHz.map { "\($0)" }
         }
     }
 

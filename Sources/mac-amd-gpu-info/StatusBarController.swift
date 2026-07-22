@@ -63,14 +63,76 @@ final class StatusBarController: NSObject {
     @objc private func openWindow() { onOpenWindow?() }
 
     @objc private func refresh() {
-        guard let item = statusItem else { return }
+        guard let item = statusItem, let button = item.button else { return }
         guard let s = GPUSelection.shared.readSelectedStats() else {
-            item.button?.title = "无 AMD 显卡"
+            button.image = nil
+            button.title = "无 AMD 显卡"
             detailItems.values.forEach { $0.title = "未检测到 AMD 独显" }
             return
         }
-        let parts = settings.enabledMetrics.compactMap { $0.statusText(s) }
-        item.button?.title = parts.isEmpty ? "GPU" : parts.joined(separator: " ")
+        // 两行样式：每个开启指标一列，上值下缩写；整体绘成模板图精确竖直居中。
+        let cols: [(value: String, label: String)] = settings.enabledMetrics.compactMap { m in
+            m.value(s).map { (value: $0, label: m.abbr) }
+        }
+        if cols.isEmpty {
+            button.image = nil
+            button.title = "GPU"
+        } else if let img = makeStackedImage(cols) {
+            button.title = ""
+            button.image = img
+            button.imagePosition = .imageOnly
+        }
         for m in StatusBarMetric.allCases { detailItems[m]?.title = m.detailText(s) }
+    }
+
+    /// 把若干「上值 / 下缩写」两行列并排绘制成与菜单栏等高的模板图（参照 gpu-fan-monitor 两行效果）。
+    private func makeStackedImage(_ cols: [(value: String, label: String)]) -> NSImage? {
+        guard !cols.isEmpty else { return nil }
+        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        let labelFont = NSFont.systemFont(ofSize: 7, weight: .medium)
+        let height = NSStatusBar.system.thickness
+        let colGap: CGFloat = 6
+        let sidePad: CGFloat = 3
+
+        var colWidths: [CGFloat] = []
+        var valueSizes: [NSSize] = []
+        var labelSizes: [NSSize] = []
+        for c in cols {
+            let vs = (c.value as NSString).size(withAttributes: [.font: valueFont])
+            let ls = (c.label as NSString).size(withAttributes: [.font: labelFont])
+            valueSizes.append(vs)
+            labelSizes.append(ls)
+            colWidths.append(ceil(max(vs.width, ls.width)))
+        }
+        let totalWidth = sidePad * 2 + colWidths.reduce(0, +) + colGap * CGFloat(cols.count - 1)
+
+        let image = NSImage(size: NSSize(width: max(totalWidth, 1), height: height))
+        image.lockFocus()
+        let topLineH: CGFloat = 11, botLineH: CGFloat = 8, gap: CGFloat = -1
+        let startY = ((height - (topLineH + botLineH + gap)) / 2).rounded()
+        var x = sidePad
+        let yBottom = startY
+        let yTop = startY + topLineH + botLineH + gap
+        for (i, c) in cols.enumerated() {
+            let cw = colWidths[i]
+            (c.label as NSString).draw(at: NSPoint(x: x + (cw - labelSizes[i].width) / 2, y: startY),
+                                       withAttributes: [.font: labelFont, .foregroundColor: NSColor.black])
+            (c.value as NSString).draw(at: NSPoint(x: x + (cw - valueSizes[i].width) / 2, y: startY + botLineH + gap),
+                                       withAttributes: [.font: valueFont, .foregroundColor: NSColor.black])
+            // 指标之间画一条暗色分隔竖线（模板图下用低 alpha 实现“更暗”）
+            if i < cols.count - 1 {
+                let dx = (x + cw + colGap / 2).rounded()
+                let line = NSBezierPath()
+                line.move(to: NSPoint(x: dx, y: yBottom))
+                line.line(to: NSPoint(x: dx, y: yTop))
+                line.lineWidth = 1
+                NSColor.black.withAlphaComponent(0.30).setStroke()
+                line.stroke()
+            }
+            x += cw + colGap
+        }
+        image.unlockFocus()
+        image.isTemplate = true   // 跟随菜单栏明暗/高亮自动着色
+        return image
     }
 }
