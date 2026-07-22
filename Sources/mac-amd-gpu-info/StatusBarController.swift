@@ -9,6 +9,8 @@ final class StatusBarController: NSObject {
 
     /// 由 AppDelegate 注入：点「打开主窗口」时的回调。
     var onOpenWindow: (() -> Void)?
+    /// 由 AppDelegate 注入：点「检查更新…」时的回调。
+    var onCheckUpdate: (() -> Void)?
 
     override init() {
         super.init()
@@ -55,12 +57,16 @@ final class StatusBarController: NSObject {
         let open = NSMenuItem(title: "打开主窗口", action: #selector(openWindow), keyEquivalent: "")
         open.target = self
         menu.addItem(open)
+        let check = NSMenuItem(title: "检查更新…", action: #selector(checkUpdate), keyEquivalent: "")
+        check.target = self
+        menu.addItem(check)
         menu.addItem(.separator())
         menu.addItem(NSMenuItem(title: "退出", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
         statusItem?.menu = menu
     }
 
     @objc private func openWindow() { onOpenWindow?() }
+    @objc private func checkUpdate() { onCheckUpdate?() }
 
     @objc private func refresh() {
         guard let item = statusItem, let button = item.button else { return }
