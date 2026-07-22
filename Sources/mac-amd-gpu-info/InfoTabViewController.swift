@@ -10,7 +10,11 @@ final class InfoTabViewController: NSViewController {
     var info: GPUInfo? {
         didSet {
             render()
-            exportVBIOSButton.isEnabled = (info?.vbiosBytes?.isEmpty == false)
+            let hasVBIOS = (info?.vbiosBytes?.isEmpty == false)
+            exportVBIOSButton.isEnabled = hasVBIOS
+            exportVBIOSButton.toolTip = hasVBIOS
+                ? "导出该卡完整 VBIOS 二进制 (.rom)"
+                : "该显卡未通过系统公开 VBIOS（Navi/RDNA 显卡在 macOS 上常见），无法读取料号/日期或导出"
         }
     }
 
@@ -23,6 +27,13 @@ final class InfoTabViewController: NSViewController {
     private var doc: FlippedView!
     private let exportInfoButton = NSButton(title: "导出信息", target: nil, action: nil)
     private let exportVBIOSButton = NSButton(title: "导出 VBIOS…", target: nil, action: nil)
+
+    // 多卡切换下拉框（置于导出按钮右侧）
+    private let gpuPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    private var gpus: [GPUInfo] = []
+    /// 切换显卡回调：由 MainWindowController 注入，用于同步选中源与传感器页。
+    var onSelectGPU: ((GPUInfo) -> Void)?
+
 
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 600))
@@ -37,22 +48,65 @@ final class InfoTabViewController: NSViewController {
         scroll.documentView = doc
         container.addSubview(scroll)
 
-        exportInfoButton.frame = NSRect(x: 12, y: 12, width: 120, height: 30)
+        exportInfoButton.frame = NSRect(x: 12, y: 12, width: 108, height: 30)
         exportInfoButton.bezelStyle = .rounded
         exportInfoButton.target = self
         exportInfoButton.action = #selector(exportInfo)
         exportInfoButton.autoresizingMask = [.maxYMargin]
         container.addSubview(exportInfoButton)
 
-        exportVBIOSButton.frame = NSRect(x: 140, y: 12, width: 150, height: 30)
+        exportVBIOSButton.frame = NSRect(x: 126, y: 12, width: 132, height: 30)
         exportVBIOSButton.bezelStyle = .rounded
         exportVBIOSButton.target = self
         exportVBIOSButton.action = #selector(exportVBIOS)
         exportVBIOSButton.autoresizingMask = [.maxYMargin]
         container.addSubview(exportVBIOSButton)
 
+        // 显卡切换下拉框：紧邻“导出 VBIOS…”右侧，占满剩余宽度
+        let gpuLab = UI.label("显卡", size: 12, color: .secondaryLabelColor)
+        gpuLab.frame = NSRect(x: 266, y: 18, width: 32, height: 16)
+        gpuLab.autoresizingMask = [.maxYMargin]
+        container.addSubview(gpuLab)
+        gpuPopup.frame = NSRect(x: 300, y: 12, width: container.bounds.width - 300 - 12, height: 28)
+        gpuPopup.autoresizingMask = [.width, .maxYMargin]
+        gpuPopup.target = self
+        gpuPopup.action = #selector(gpuChanged)
+        container.addSubview(gpuPopup)
+
         self.view = container
         render()
+    }
+
+    // MARK: - 多卡切换
+
+    /// 配置下拉框显卡列表并选中当前卡。仅一张卡时禁用切换。
+    func configureGPUs(_ list: [GPUInfo], current: UInt64?) {
+        gpus = list
+        guard isViewLoaded else { return }
+        gpuPopup.removeAllItems()
+        if list.isEmpty {
+            gpuPopup.addItem(withTitle: "未检测到 AMD 显卡")
+            gpuPopup.isEnabled = false
+            return
+        }
+        for g in list {
+            // 仅当存在同名型号时才追加 PCI 位置以区分；否则只显示型号。
+            let duplicated = list.filter { $0.modelName == g.modelName }.count > 1
+            let loc = (duplicated ? g.pciLocation.map { " @\($0)" } : nil) ?? ""
+            gpuPopup.addItem(withTitle: "\(g.modelName)\(loc)")
+        }
+        gpuPopup.isEnabled = list.count > 1
+        if let cur = current, let idx = list.firstIndex(where: { $0.registryID == cur }) {
+            gpuPopup.selectItem(at: idx)
+        }
+    }
+
+    @objc private func gpuChanged() {
+        let idx = gpuPopup.indexOfSelectedItem
+        guard idx >= 0, idx < gpus.count else { return }
+        let g = gpus[idx]
+        self.info = g
+        onSelectGPU?(g)
     }
 
     // MARK: - 版式定义

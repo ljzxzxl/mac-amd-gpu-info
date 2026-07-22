@@ -55,4 +55,23 @@ enum DeviceDatabase {
             return nil
         }
     }
+
+    /// PCI 子系统厂商 ID → 板卡品牌（AIB 厂商）。用于无 VBIOS（如 Navi）时补全品牌。
+    static func aibBrand(subsystemVendorID: UInt32) -> String? {
+        switch subsystemVendorID {
+        case 0x1002: return "AMD"
+        case 0x1043: return "ASUS"
+        case 0x1458: return "GIGABYTE"
+        case 0x1462: return "MSI"
+        case 0x148C: return "PowerColor"
+        case 0x1682: return "XFX"
+        case 0x174B, 0x1DA2: return "Sapphire"
+        case 0x1787: return "HIS"
+        case 0x1849: return "ASRock"
+        case 0x196E: return "PNY"
+        case 0x19DA: return "Zotac"
+        case 0x3842: return "EVGA"
+        default: return nil
+        }
+    }
 }

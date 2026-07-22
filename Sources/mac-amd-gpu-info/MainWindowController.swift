@@ -5,12 +5,18 @@ final class MainWindowController: NSWindowController {
     private let sensorsVC = SensorsTabViewController()
     private let statusVC = StatusBarTabViewController()
 
+    private var infos: [GPUInfo] = []
+
     init() {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 640),
                               styleMask: [.titled, .closable, .miniaturizable],
                               backing: .buffered, defer: false)
         window.title = "Mac AMD GPU Info"
         super.init(window: window)
+
+        // 枚举所有显卡并初始化选中源
+        infos = GPUReader.readAllInfos()
+        GPUSelection.shared.setGPUs(infos)
 
         let tabView = NSTabView(frame: window.contentView!.bounds)
         tabView.autoresizingMask = [.width, .height]
@@ -33,8 +39,16 @@ final class MainWindowController: NSWindowController {
         window.contentView?.addSubview(tabView)
         tabView.layoutSubtreeIfNeeded()
 
+        // 信息页：加载视图后配置显卡下拉框与切换回调
         _ = infoVC.view
-        infoVC.info = GPUReader.readInfo()
+        infoVC.configureGPUs(infos, current: GPUSelection.shared.currentRegistryID)
+        infoVC.onSelectGPU = { [weak self] info in
+            GPUSelection.shared.currentRegistryID = info.registryID
+            self?.sensorsVC.setSelectedGPU(info)
+        }
+        let current = GPUSelection.shared.currentInfo
+        infoVC.info = current
+        sensorsVC.setSelectedGPU(current)
 
         var chrome: CGFloat = 40
         let contentRect = tabView.contentRect

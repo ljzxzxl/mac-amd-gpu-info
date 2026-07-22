@@ -21,7 +21,8 @@ final class SensorsTabViewController: NSViewController {
     private let gVRAM = SensorGraphView()
     private var timer: Timer?
 
-    private let vramTotalMB = 4096.0
+    private var vramTotalMB = 4096.0
+    private var selectedRegistryID: UInt64?
 
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 600))
@@ -58,11 +59,26 @@ final class SensorsTabViewController: NSViewController {
         gPower.note = "整卡总功耗"
         gFan.configure([GraphSeries(label: "风扇", color: .systemGreen, maxValue: 2500, unit: "RPM")])
         gFan.note = "显卡风扇转速"
-        gVRAM.configure([GraphSeries(label: "显存占用", color: .systemPurple, maxValue: vramTotalMB, unit: "MB")])
-        gVRAM.note = "已用显存 / \(Int(vramTotalMB)) MB"
+        configureVRAMGraph()
 
         self.view = container
     }
+
+    /// 按当前选中卡的显存容量设置显存曲线上限与备注。
+    private func configureVRAMGraph() {
+        gVRAM.configure([GraphSeries(label: "显存占用", color: .systemPurple, maxValue: vramTotalMB, unit: "MB")])
+        gVRAM.note = "已用显存 / \(Int(vramTotalMB)) MB"
+    }
+
+    /// 主窗口下拉框切换显卡时调用：更新目标卡与显存上限并立即刷新。
+    func setSelectedGPU(_ info: GPUInfo?) {
+        selectedRegistryID = info?.registryID
+        vramTotalMB = Double(info?.vramMB ?? 4096)
+        guard isViewLoaded else { return }
+        configureVRAMGraph()
+        refresh()
+    }
+
 
     private func buildMetrics() {
         func f(_ v: Int?, _ u: String) -> String { v.map { "\($0) \(u)" } ?? "—" }
@@ -102,7 +118,7 @@ final class SensorsTabViewController: NSViewController {
 
     @objc private func refresh() {
         guard isViewLoaded else { return }
-        let stats = GPUReader.readStats()
+        let stats = selectedRegistryID.map { GPUReader.readStats(pciRegistryID: $0) } ?? GPUReader.readStats()
         for m in metrics {
             let v = stats.map { m.get($0) } ?? "—"
             m.box.stringValue = v

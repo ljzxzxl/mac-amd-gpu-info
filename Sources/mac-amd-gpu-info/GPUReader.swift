@@ -7,15 +7,56 @@ enum GPUReader {
 
     // MARK: - 静态信息
 
+    /// 枚举所有 Radeon 独显（多卡），每项带稳定 registryID 作唯一键。
+    static func readAllInfos() -> [GPUInfo] {
+        var result: [GPUInfo] = []
+        var it: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMasterPortDefault,
+                                           IOServiceMatching("IOPCIDevice"), &it) == KERN_SUCCESS else {
+            return result
+        }
+        defer { IOObjectRelease(it) }
+        var service = IOIteratorNext(it)
+        while service != 0 {
+            var props: Unmanaged<CFMutableDictionary>?
+            if IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
+               let dict = props?.takeRetainedValue() as? [String: Any],
+               let model = propString(dict["model"]), model.contains("Radeon") {
+                var info = buildInfo(from: dict)
+                var rid: UInt64 = 0
+                if IORegistryEntryGetRegistryEntryID(service, &rid) == KERN_SUCCESS { info.registryID = rid }
+                info.pciLocation = dict["pcidebug"] as? String
+                // 驱动家族按实际 accelerator 类名（X4000/X5000/X6000）展示。
+                if let cls = acceleratorClassName(under: service) {
+                    let family = cls.components(separatedBy: "_").first ?? cls
+                    info.driver = "\(family) 家族（系统内置）"
+                }
+                result.append(info)
+            }
+            IOObjectRelease(service)
+            service = IOIteratorNext(it)
+        }
+        return result
+    }
+
+    /// 首张 Radeon 的静态信息（无卡时返回占位）。
     static func readInfo() -> GPUInfo {
-        var info = GPUInfo(modelName: "未检测到 AMD 独显（RadeonX4000 家族）")
+        readAllInfos().first ?? {
+            var info = GPUInfo(modelName: "未检测到 AMD 独显（RadeonX4000 家族）")
+            info.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
+            info.metalSupport = metalSupport()
+            return info
+        }()
+    }
+
+    /// 从单个 IOPCIDevice 属性字典构建 GPUInfo（含 VBIOS、机型库、显存兜底）。
+    private static func buildInfo(from props: [String: Any]) -> GPUInfo {
+        var info = GPUInfo(modelName: "AMD GPU")
         info.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
         info.metalSupport = metalSupport()
 
-        guard let props = pciDeviceProps() else { return info }
-
         info.modelName = propString(props["model"]) ?? "AMD GPU"
-        info.driver = "AMDRadeonX4000 家族（系统内置）"
+        info.driver = "AMD Radeon（系统内置）"
         info.deviceID = dataLE32(props["device-id"])
         info.vendorID = dataLE32(props["vendor-id"])
         info.revisionID = dataLE32(props["revision-id"])
@@ -53,28 +94,22 @@ enum GPUReader {
         }
         // 机型库未命中显存类型时，用 VBIOS 推断值兜底。
         if info.vramType == nil { info.vramType = vbiosMemoryType }
+        // 品牌兜底：无 VBIOS（如 Navi）时，用 PCI 子系统厂商 ID 推断 AIB 品牌。
+        if info.brand == nil, let ssv = subsystemVendorID(from: props) {
+            info.brand = DeviceDatabase.aibBrand(subsystemVendorID: ssv)
+        }
         return info
     }
 
-    /// 匹配 IOPCIDevice，返回第一张 model 含 "Radeon" 的 GPU 的完整属性字典。
-    private static func pciDeviceProps() -> [String: Any]? {
-        var it: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMasterPortDefault,
-                                           IOServiceMatching("IOPCIDevice"), &it) == KERN_SUCCESS else {
-            return nil
-        }
-        defer { IOObjectRelease(it) }
-        var service = IOIteratorNext(it)
-        while service != 0 {
-            var props: Unmanaged<CFMutableDictionary>?
-            if IORegistryEntryCreateCFProperties(service, &props, kCFAllocatorDefault, 0) == KERN_SUCCESS,
-               let dict = props?.takeRetainedValue() as? [String: Any],
-               let model = propString(dict["model"]), model.contains("Radeon") {
-                IOObjectRelease(service)
-                return dict
-            }
-            IOObjectRelease(service)
-            service = IOIteratorNext(it)
+    /// 从 `compatible` 属性解析 PCI 子系统厂商 ID（首个 `pciVVVV,DDDD` 令牌的 VVVV）。
+    private static func subsystemVendorID(from props: [String: Any]) -> UInt32? {
+        guard let d = props["compatible"] as? Data else { return nil }
+        let s = String(decoding: d, as: UTF8.self)
+        for raw in s.split(whereSeparator: { $0 == "\u{0}" }) {
+            let t = raw.lowercased()
+            guard t.hasPrefix("pci"), let comma = t.firstIndex(of: ",") else { continue }
+            let vHex = String(t[t.index(t.startIndex, offsetBy: 3)..<comma])
+            if vHex.count == 4, let v = UInt32(vHex, radix: 16) { return v }
         }
         return nil
     }
@@ -90,13 +125,64 @@ enum GPUReader {
         defer { IOObjectRelease(it) }
         var service = IOIteratorNext(it)
         while service != 0 {
-            if let cls = ioClassName(service), cls.contains("AMDRadeonX4000"),
+            if let cls = ioClassName(service), isAMDAccelerator(cls),
                let perf = perfStats(service) {
                 IOObjectRelease(service)
                 return parseStats(perf)
             }
             IOObjectRelease(service)
             service = IOIteratorNext(it)
+        }
+        return nil
+    }
+
+    /// AMD 显卡 accelerator 类名判定：覆盖 X4000(Polaris)/X5000(Vega)/X6000(Navi/RDNA) 各家族。
+    private static func isAMDAccelerator(_ cls: String) -> Bool {
+        cls.contains("AMDRadeon") && cls.contains("Accelerator")
+    }
+
+    /// 读取指定 PCI 卡（按 registryID）的传感器：定位该 PCI 节点后向下遍历子树找到它自己的 accelerator。
+    static func readStats(pciRegistryID: UInt64) -> GPUStats? {
+        var it: io_iterator_t = 0
+        guard IOServiceGetMatchingServices(kIOMasterPortDefault,
+                                           IORegistryEntryIDMatching(pciRegistryID), &it) == KERN_SUCCESS else {
+            return nil
+        }
+        defer { IOObjectRelease(it) }
+        let pci = IOIteratorNext(it)
+        defer { if pci != 0 { IOObjectRelease(pci) } }
+        guard pci != 0 else { return nil }
+        return acceleratorStats(under: pci)
+    }
+
+    /// 在给定节点的子树（IOService 平面）中查找 AMD accelerator 并读 PerformanceStatistics。
+    private static func acceleratorStats(under node: io_object_t) -> GPUStats? {
+        if let cls = ioClassName(node), isAMDAccelerator(cls), let perf = perfStats(node) {
+            return parseStats(perf)
+        }
+        var child: io_iterator_t = 0
+        guard IORegistryEntryGetChildIterator(node, kIOServicePlane, &child) == KERN_SUCCESS else { return nil }
+        defer { IOObjectRelease(child) }
+        var c = IOIteratorNext(child)
+        while c != 0 {
+            if let s = acceleratorStats(under: c) { IOObjectRelease(c); return s }
+            IOObjectRelease(c)
+            c = IOIteratorNext(child)
+        }
+        return nil
+    }
+
+    /// 在给定 PCI 节点子树中查找 AMD accelerator 的类名（用于展示驱动家族，如 AMDRadeonX6000）。
+    private static func acceleratorClassName(under node: io_object_t) -> String? {
+        if let cls = ioClassName(node), isAMDAccelerator(cls) { return cls }
+        var child: io_iterator_t = 0
+        guard IORegistryEntryGetChildIterator(node, kIOServicePlane, &child) == KERN_SUCCESS else { return nil }
+        defer { IOObjectRelease(child) }
+        var c = IOIteratorNext(child)
+        while c != 0 {
+            if let s = acceleratorClassName(under: c) { IOObjectRelease(c); return s }
+            IOObjectRelease(c)
+            c = IOIteratorNext(child)
         }
         return nil
     }

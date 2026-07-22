@@ -13,6 +13,10 @@ struct GPUInfo {
     var revisionID: UInt32?
     var pcieLink: String?
 
+    // 多卡标识
+    var registryID: UInt64?   // IOPCIDevice 稳定注册表 ID，作为每张卡唯一键
+    var pciLocation: String?  // pcidebug，如 "1:0:0"，用于区分同型号卡
+
     var vramMB: Int?
     var vramType: String?
     var memoryVendor: String?

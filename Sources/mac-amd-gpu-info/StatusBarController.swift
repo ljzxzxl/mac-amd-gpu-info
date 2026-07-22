@@ -64,7 +64,7 @@ final class StatusBarController: NSObject {
 
     @objc private func refresh() {
         guard let item = statusItem else { return }
-        guard let s = GPUReader.readStats() else {
+        guard let s = GPUSelection.shared.readSelectedStats() else {
             item.button?.title = "无 AMD 显卡"
             detailItems.values.forEach { $0.title = "未检测到 AMD 独显" }
             return

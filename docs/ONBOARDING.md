@@ -59,9 +59,9 @@ bash packaging/make-dmg.sh      # 生成 dist/ 下 DMG + SHA256
 
 ## 4. 数据来源（IOKit，务必理解）
 
-- **传感器**：匹配 `IOServiceMatching("IOAccelerator")` → 过滤 IOClass 含 `AMDRadeonX4000` → 读属性 `PerformanceStatistics`（CFDictionary）。
+- **传感器**：匹配 `IOServiceMatching("IOAccelerator")` → 过滤 IOClass 含 `AMDRadeon` 且含 `Accelerator`（覆盖 X4000/Polaris、X5000/Vega、X6000/Navi）→ 读属性 `PerformanceStatistics`（CFDictionary）。多卡下按每张 PCI 卡的 `registryID` 定位其 PCI 节点，再向下遍历 IOService 子树找到本卡 accelerator（见 `GPUReader.readStats(pciRegistryID:)`），避免多卡串号。
   - 常用键：`Temperature(C)`、`Core Clock(MHz)`、`Memory Clock(MHz)`、`GPU Activity(%)`、`Device Utilization %`、`Total Power(W)`、`Fan Speed(RPM)`、`Fan Speed(%)`、`inUseVidMemoryBytes`。
-- **静态信息**：匹配 `IOServiceMatching("IOPCIDevice")` → 找 `model` 含 "Radeon" 的节点 → `IORegistryEntryCreateCFProperties`。
+- **静态信息**：匹配 `IOServiceMatching("IOPCIDevice")` → 枚举所有 `model` 含 "Radeon" 的节点（`GPUReader.readAllInfos()`，支持多卡）→ `IORegistryEntryCreateCFProperties`。
   - 键：`model`（CFData 字符串）、`device-id`/`vendor-id`/`revision-id`（CFData，小端）、`VRAM,totalMB`（Int）、`IOPCIExpressLinkStatus`（Int，见下）、`ATY,bin_image`（CFData，**完整 VBIOS 二进制**，通常 64KB）。
   - PCIe 解析：`IOPCIExpressLinkStatus` 低 4 位=速率(3=Gen3)，bit9:4=通道数。
 - **端口常量**：用 `kIOMasterPortDefault`（兼容 macOS 11；`kIOMainPortDefault` 需 macOS 12+，会导致最低系统 11 编译报错）。
