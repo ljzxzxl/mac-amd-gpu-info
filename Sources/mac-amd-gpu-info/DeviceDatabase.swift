@@ -17,6 +17,16 @@ struct GPUSpec {
     var transistorsB: Double
 }
 
+/// Intel 核显规格（无独立显存/位宽等概念，单独一张表）。
+struct IntelGPUSpec {
+    var name: String          // "Intel UHD Graphics 630"
+    var architecture: String  // "Gen 9.5 GT2"
+    var process: String       // "14 nm"
+    var executionUnits: Int   // EU 数
+    var baseMHz: Int
+    var maxMHz: Int
+}
+
 enum DeviceDatabase {
     /// 未收录返回 nil，UI 侧回退为"未知"。
     static func spec(deviceID: UInt32) -> GPUSpec? {
@@ -56,9 +66,37 @@ enum DeviceDatabase {
         }
     }
 
+    /// Intel 核显规格，按 device-id 查表（未收录返回 nil）。
+    static func intelSpec(deviceID: UInt32) -> IntelGPUSpec? {
+        switch deviceID {
+        case 0x3E9B, 0x3E92, 0x3E98, 0x3E91:  // Coffee Lake UHD 630
+            return IntelGPUSpec(name: "Intel UHD Graphics 630", architecture: "Gen 9.5 GT2", process: "14 nm",
+                                executionUnits: 24, baseMHz: 350, maxMHz: 1200)
+        case 0x5912, 0x591B, 0x5902:          // Kaby Lake HD 630
+            return IntelGPUSpec(name: "Intel HD Graphics 630", architecture: "Gen 9.5 GT2", process: "14 nm",
+                                executionUnits: 24, baseMHz: 350, maxMHz: 1150)
+        case 0x1926, 0x1927, 0x1912, 0x191B:  // Skylake Iris/HD 5xx
+            return IntelGPUSpec(name: "Intel Iris/HD Graphics 5xx", architecture: "Gen 9 GT2/GT3e", process: "14 nm",
+                                executionUnits: 48, baseMHz: 300, maxMHz: 1050)
+        case 0x0A2E, 0x0A26, 0x0D26:          // Haswell Iris 5100 / HD 5000
+            return IntelGPUSpec(name: "Intel Iris/HD Graphics 5000", architecture: "Gen 7.5", process: "22 nm",
+                                executionUnits: 40, baseMHz: 200, maxMHz: 1100)
+        case 0x0412, 0x0416, 0x0D22:          // Haswell HD 4600 / Iris Pro
+            return IntelGPUSpec(name: "Intel HD Graphics 4600", architecture: "Gen 7.5 GT2", process: "22 nm",
+                                executionUnits: 20, baseMHz: 350, maxMHz: 1350)
+        case 0x0166:                          // Ivy Bridge HD 4000
+            return IntelGPUSpec(name: "Intel HD Graphics 4000", architecture: "Gen 7 GT2", process: "22 nm",
+                                executionUnits: 16, baseMHz: 350, maxMHz: 1150)
+        case 0x87CA, 0x591E:                  // UHD 617 / HD 615（低压）
+            return IntelGPUSpec(name: "Intel UHD Graphics 617", architecture: "Gen 9.5 GT2", process: "14 nm",
+                                executionUnits: 24, baseMHz: 300, maxMHz: 1050)
+        default:
+            return nil
+        }
+    }
+
     /// PCI 子系统厂商 ID → 板卡品牌（AIB 厂商）。用于无 VBIOS（如 Navi）时补全品牌。
-    static func aibBrand(subsystemVendorID: UInt32) -> String? {
-        switch subsystemVendorID {
+    static func aibBrand(subsystemVendorID: UInt32) -> String? {        switch subsystemVendorID {
         case 0x1002: return "AMD"
         case 0x1043: return "ASUS"
         case 0x1458: return "GIGABYTE"

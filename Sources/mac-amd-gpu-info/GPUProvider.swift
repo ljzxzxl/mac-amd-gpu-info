@@ -14,7 +14,8 @@ enum GPUReader {
         if AppleSiliconGPUProvider.isSupported() {
             return AppleSiliconGPUProvider()
         }
-        return AMDGPUProvider()
+        // Intel Mac：同时呈现 AMD 独显与 Intel 核显。
+        return CompositeGPUProvider(providers: [AMDGPUProvider(), IntelGPUProvider()])
     }()
 
     static func readAllInfos() -> [GPUInfo] { return provider.readAllInfos() }

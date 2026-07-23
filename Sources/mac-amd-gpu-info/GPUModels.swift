@@ -44,6 +44,7 @@ struct GPUInfo {
     var metalSupport: String?
     var driver: String?
     var isAppleSilicon: Bool = false
+    var isIntegrated: Bool = false   // Intel 核显等集成显卡
 
     init(modelName: String) { self.modelName = modelName }
 }
