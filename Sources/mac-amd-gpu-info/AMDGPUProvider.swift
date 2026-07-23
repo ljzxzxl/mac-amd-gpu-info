@@ -250,7 +250,8 @@ struct AMDGPUProvider: GPUProvider {
         guard let dev = MTLCreateSystemDefaultDevice() else { return nil }
 #if arch(arm64)
         if #available(macOS 15.0, *) {
-            if dev.supportsFamily(MTLGPUFamily.apple9) { return "Metal 4" }
+            // 用 rawValue 规避旧 SDK 无 MTLGPUFamily.apple9 枚举导致的编译失败（apple9 == 1009）
+            if let apple9 = MTLGPUFamily(rawValue: 1009), dev.supportsFamily(apple9) { return "Metal 4" }
         }
 #endif
         if #available(macOS 13.0, *) {

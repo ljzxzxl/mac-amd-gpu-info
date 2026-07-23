@@ -99,12 +99,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         switch alert.runModal() {
         case .alertFirstButtonReturn:
             if let dmg = info.dmgURL {
-                self.info("正在后台下载新版本，完成后会自动打开安装窗口，届时把 App 拖入「应用程序」即可。")
+                // 直接开始下载（不要在此前弹模态框——runModal 会阻塞主线程、延后下载启动，
+                // 造成“提示在下载但实际没下载”的错觉）。成功后 DMG 会自动打开安装窗。
                 Updater.downloadAndOpen(dmg) { [weak self] err in
-                    if let err = err {
-                        self?.info("下载失败：\(err.localizedDescription)")
-                        if let page = info.pageURL { NSWorkspace.shared.open(page) }
-                    }
+                    guard let err = err else { return }
+                    self?.info("下载失败：\(err.localizedDescription)\n将打开发行页，可手动下载。")
+                    if let page = info.pageURL { NSWorkspace.shared.open(page) }
                 }
             } else if let page = info.pageURL {
                 NSWorkspace.shared.open(page)   // 无 dmg 资产则打开发行页

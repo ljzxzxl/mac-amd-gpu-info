@@ -60,17 +60,20 @@ enum Updater {
         return false
     }
 
-    /// 下载 dmg 到「下载」文件夹后用 NSWorkspace 打开（自动挂载并弹出安装窗）。
+    /// 下载 dmg 后用 NSWorkspace 打开（自动挂载并弹出安装窗）。
+    /// 存到 Application Support（非 TCC 保护目录），避免写 ~/Downloads 被隐私权限拦截。
     static func downloadAndOpen(_ dmgURL: URL, completion: @escaping (Error?) -> Void) {
-        URLSession.shared.downloadTask(with: dmgURL) { tmp, _, err in
+        URLSession.shared.downloadTask(with: dmgURL) { tmp, resp, err in
             func done(_ e: Error?) { DispatchQueue.main.async { completion(e) } }
             if let err = err { done(err); return }
-            guard let tmp = tmp else { done(error("下载失败")); return }
-            let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-                ?? FileManager.default.temporaryDirectory
-            let name = dmgURL.lastPathComponent.isEmpty ? "MacAMDGPUInfo.dmg" : dmgURL.lastPathComponent
-            let dest = dir.appendingPathComponent(name)
+            if let http = resp as? HTTPURLResponse, http.statusCode != 200 {
+                done(error("下载失败（HTTP \(http.statusCode)）")); return
+            }
+            guard let tmp = tmp else { done(error("下载失败：无临时文件")); return }
             do {
+                let dir = try updatesDirectory()
+                let name = dmgURL.lastPathComponent.hasSuffix(".dmg") ? dmgURL.lastPathComponent : "MacAMDGPUInfo.dmg"
+                let dest = dir.appendingPathComponent(name)
                 if FileManager.default.fileExists(atPath: dest.path) {
                     try FileManager.default.removeItem(at: dest)
                 }
@@ -81,6 +84,15 @@ enum Updater {
                 done(error)
             }
         }.resume()
+    }
+
+    /// 更新包存放目录：`~/Library/Application Support/MacAMDGPUInfo/Updates`（非 TCC 保护）。
+    private static func updatesDirectory() throws -> URL {
+        let base = try FileManager.default.url(for: .applicationSupportDirectory,
+                                               in: .userDomainMask, appropriateFor: nil, create: true)
+        let dir = base.appendingPathComponent("MacAMDGPUInfo/Updates", isDirectory: true)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
     }
 
     private static func normalize(_ tag: String) -> String {
