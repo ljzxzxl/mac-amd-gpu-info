@@ -1,6 +1,6 @@
 # Mac AMD GPU Info — 交接文档 (ONBOARDING)
 
-> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目。原"当前待办问题"（RX 550 / `0x67FF` 信息识别不全）已在 `v1.1.1` 修复（第 6 节）；`v1.2.0` 新增**多显卡切换**（第 7 节）；`v1.2.1` 顶栏改为**两行样式**（第 8 节）；`v1.3.0` 新增**自动检查更新**（第 9 节）。
+> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目。原"当前待办问题"已修复；`v1.2.0` 新增多显卡切换；`v1.3.0` 新增自动检查更新；`v1.4.0` 迎来架构巨变，正式支持 **Apple Silicon (M系列芯片)** 及按需系统提权采集高级数据（第 10 节）。
 
 ---
 
@@ -9,11 +9,15 @@
 macOS 下没有 GPU-Z，本项目是面向 **Intel Mac（含黑苹果）+ AMD 独显** 的「GPU 信息查看 + 传感器实时监控」桌面应用（对标 GPU-Z + 腾讯柠檬状态栏）。纯 **只读、无需 root、不改系统设置**（仅在检查更新时访问 GitHub Releases）。
 
 - 仓库：`git@github.com:ljzxzxl/mac-amd-gpu-info.git`（分支 `main`，默认推送 `origin`）
-- 已发布：`v1.0.0`（信息 + 传感器），`v1.1.0`（新增状态栏），`v1.1.1`（RX 550 `0x67FF` 识别修复），`v1.2.0`（多显卡切换），`v1.2.1`（顶栏两行样式），`v1.3.0`（自动检查更新）
+- 已发布：`v1.0.0`~`v1.3.0`（AMD 核心迭代），`v1.4.0`（Apple Silicon M芯片双架构支持与按需提权）
 - 语言/UI：Swift + AppKit（无 SwiftUI、无 Storyboard，纯代码构建）
 
-### 背景结论（重要）
-「macOS + AMD 显卡」这一组合**本质只存在于 Intel Mac（真机或黑苹果）**。Apple Silicon 不支持独立/外接 AMD GPU（统一内存架构，且已移除第三方 GPU 驱动）。所以本应用是 Intel 定位；我们仍编译**通用二进制**只是为了在任何 Mac 上都能原生启动（在 Apple Silicon 上会显示"无 AMD 显卡"）。
+### 背景结论（重要进化）
+在 `v1.4.0` 之前，本应用定位纯粹是“黑苹果/Intel Mac”的专属工具。
+**在 `v1.4.0` 开始，项目架构大破大立**，正式兼容了苹果自研的 **Apple Silicon (M系列 SoC)** 芯片：
+- 引入了 `GPUProvider` 协议，将 AMD 与 Apple Silicon 取值逻辑彻底物理隔离。
+- 对于 Apple Silicon，从 `AGXAccelerator` 和 `AppleSMC` 读出其统一内存、架构信息、核心温度。
+- 由于 M 芯片的核心频率与功耗受 macOS 原生底层隔离保护，引入了**按需无感驻留的提权服务 (`PowermetricsHelper`)**：用户可点击带 🔒 图标的输入框，系统输入密码后即刻打通管道，实现高级极客参数的秒级点亮。
 
 ---
 
@@ -179,4 +183,12 @@ ioreg -rw0 -c IOPCIDevice | grep -o '"ATY,bin_image" = <[0-9a-f]*>' | head -1 \
 ## 11. 约定
 
 - 提交信息用中文、说明动机；只改必要文件；不引入 SwiftUI/Xcode 依赖。
-- 发布走 tag（`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`），CI 自动出 DMG Release。
+- 发布走 tag（`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`），CI 自动出 DMG Release。若未配置 CI，可直接在 GitHub Releases 面板手动发布或使用 `gh release create`。
+
+## 10. 【v1.4.0】Apple Silicon 架构与授权引擎
+
+为支持 M 芯片的获取，本次重构了底层获取方式：
+- **`GPUProvider.swift`**：统一的双端协议抽象。
+- **`AppleSiliconGPUProvider.swift`**：免 Root 读取 Metal 特性、系统内存带宽以及 PMU `tdie` SoC 综合温度。
+- **UI 动态降级与内联授权**：将原本无法无权读取的“显存频率、风扇”平滑回退为 `-`，而在“核心频率、功耗”项置入原生的 `NSButton(bezelStyle: .inline)` 授权按钮。
+- **`PowermetricsHelper.swift`**：通过 `NSAppleScript` 和底层 `powermetrics` C 接口，以极高频 (1000ms) 搭建数据泵。并利用事件总线 `NotificationCenter` 在授权过审的毫秒内实现前端 UI 界面的重绘（消除轮询卡顿感）。

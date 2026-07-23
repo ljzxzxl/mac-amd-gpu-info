@@ -10,6 +10,8 @@ final class SensorsTabViewController: NSViewController {
     }
 
     private let topView = FlippedView()
+    private var isAppleSilicon = false
+    private var authButtons: [NSButton] = []
     private var metrics: [Metric] = []
 
     private let stack = NSStackView()
@@ -31,6 +33,7 @@ final class SensorsTabViewController: NSViewController {
         topView.frame = NSRect(x: 12, y: 508, width: 536, height: 84)
         topView.autoresizingMask = [.width, .minYMargin]
         container.addSubview(topView)
+
         buildMetrics()
         layoutMetrics()
 
@@ -73,28 +76,41 @@ final class SensorsTabViewController: NSViewController {
     /// 主窗口下拉框切换显卡时调用：更新目标卡与显存上限并立即刷新。
     func setSelectedGPU(_ info: GPUInfo?) {
         selectedRegistryID = info?.registryID
+        isAppleSilicon = info?.isAppleSilicon ?? false
         vramTotalMB = Double(info?.vramMB ?? 4096)
         guard isViewLoaded else { return }
+        
+        topView.subviews.forEach { $0.removeFromSuperview() }
+        buildMetrics()
+        layoutMetrics()
+        
         configureVRAMGraph()
         refresh()
     }
 
 
     private func buildMetrics() {
-        func f(_ v: Int?, _ u: String) -> String { v.map { "\($0) \(u)" } ?? "—" }
-        metrics = [
-            Metric(label: "温度", box: UI.valueBox("—")) { f($0.tempC, "°C") },
-            Metric(label: "核心", box: UI.valueBox("—")) { f($0.coreMHz, "MHz") },
-            Metric(label: "显存", box: UI.valueBox("—")) { f($0.memMHz, "MHz") },
-            Metric(label: "活跃", box: UI.valueBox("—")) { f($0.activityPct, "%") },
-            Metric(label: "占用", box: UI.valueBox("—")) { f($0.deviceUtilPct, "%") },
-            Metric(label: "功耗", box: UI.valueBox("—")) { f($0.powerW, "W") },
-            Metric(label: "风扇", box: UI.valueBox("—")) { "\(f($0.fanRPM, "RPM"))\($0.fanPct.map { " (\($0)%)" } ?? "")" },
-            Metric(label: "显存占用", box: UI.valueBox("—")) { f($0.vramInUseMB, "MB") },
+        func f(_ v: Int?, _ u: String) -> String { v.map { "\($0) \(u)" } ?? "-" }
+        func fD(_ v: Double?, _ u: String) -> String { v.map { $0 < 1.0 ? "\(Int($0*1000)) mW" : String(format: "%.1f W", $0) } ?? "-" }
+        var list: [Metric] = [
+            Metric(label: "温度", box: UI.valueBox("-")) { f($0.tempC, "°C") },
+            Metric(label: "核心频率", box: UI.valueBox("-")) { f($0.coreMHz, "MHz") }
         ]
+        list.append(Metric(label: "显存频率", box: UI.valueBox("-")) { f($0.memMHz, "MHz") })
+        list.append(contentsOf: [
+            Metric(label: "活跃", box: UI.valueBox("-")) { f($0.activityPct, "%") },
+            Metric(label: "占用", box: UI.valueBox("-")) { f($0.deviceUtilPct, "%") },
+            Metric(label: "功耗", box: UI.valueBox("-")) { fD($0.powerW, "W") },
+            Metric(label: "风扇", box: UI.valueBox("-")) { "\(f($0.fanRPM, "RPM"))\($0.fanPct.map { " (\($0)%)" } ?? "")" },
+            Metric(label: "显存占用", box: UI.valueBox("-")) { f($0.vramInUseMB, "MB") }
+        ])
+        metrics = list
     }
 
     private func layoutMetrics() {
+        authButtons.forEach { $0.removeFromSuperview() }
+        authButtons.removeAll()
+        
         let cols = 3
         let cellW = topView.frame.width / CGFloat(cols)
         for (i, m) in metrics.enumerated() {
@@ -106,6 +122,21 @@ final class SensorsTabViewController: NSViewController {
             topView.addSubview(lab)
             m.box.frame = NSRect(x: x + 44, y: yy, width: cellW - 50, height: 21)
             topView.addSubview(m.box)
+            
+            if isAppleSilicon && (m.label == "核心频率" || m.label == "功耗") {
+                let btn = NSButton(title: "点击授权", target: self, action: #selector(doAuth))
+                btn.bezelStyle = .inline
+                btn.font = NSFont.systemFont(ofSize: 10)
+                if #available(macOS 11.0, *) {
+                    btn.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: nil)
+                    btn.imagePosition = .imageLeft
+                    btn.frame = NSRect(x: x + 44, y: yy + 1, width: 75, height: 18)
+                } else {
+                    btn.frame = NSRect(x: x + 46, y: yy + 3, width: 60, height: 15)
+                }
+                topView.addSubview(btn)
+                authButtons.append(btn)
+            }
         }
     }
 
@@ -114,13 +145,27 @@ final class SensorsTabViewController: NSViewController {
         let t = Timer(timeInterval: 1.0, target: self, selector: #selector(refresh), userInfo: nil, repeats: true)
         RunLoop.main.add(t, forMode: .common)
         timer = t
+        
+        NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: NSNotification.Name("PowermetricsAuthorized"), object: nil)
+    }
+    
+    deinit {
+        NotificationCenter.default.removeObserver(self)
     }
 
     @objc private func refresh() {
         guard isViewLoaded else { return }
         let stats = selectedRegistryID.map { GPUReader.readStats(pciRegistryID: $0) } ?? GPUReader.readStats()
+        let isAuth = PowermetricsHelper.shared.isAuthorized
+        authButtons.forEach { $0.isHidden = isAuth }
+        
         for m in metrics {
-            let v = stats.map { m.get($0) } ?? "—"
+            var v = stats.map { m.get($0) } ?? "-"
+            if isAppleSilicon {
+                if !isAuth && (m.label == "核心频率" || m.label == "功耗") {
+                    v = ""
+                }
+            }
             m.box.stringValue = v
             m.box.toolTip = v
         }
@@ -128,8 +173,9 @@ final class SensorsTabViewController: NSViewController {
         gTemp.push([s.tempC.map(Double.init)])
         gAct.push([s.activityPct.map(Double.init)])
         gUtil.push([s.deviceUtilPct.map(Double.init)])
-        gPower.push([s.powerW.map(Double.init)])
+        gPower.push([s.powerW])
         gFan.push([s.fanRPM.map(Double.init)])
         gVRAM.push([s.vramInUseMB.map(Double.init)])
     }
+    @objc private func doAuth() { PowermetricsHelper.shared.startIfNeeded() }
 }

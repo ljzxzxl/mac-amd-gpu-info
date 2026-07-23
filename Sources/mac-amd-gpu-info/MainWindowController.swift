@@ -11,7 +11,7 @@ final class MainWindowController: NSWindowController {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 640),
                               styleMask: [.titled, .closable, .miniaturizable],
                               backing: .buffered, defer: false)
-        window.title = "Mac AMD GPU Info"
+        window.title = "Mac GPU Info"
         super.init(window: window)
 
         // 枚举所有显卡并初始化选中源

@@ -85,7 +85,7 @@ final class InfoTabViewController: NSViewController {
         guard isViewLoaded else { return }
         gpuPopup.removeAllItems()
         if list.isEmpty {
-            gpuPopup.addItem(withTitle: "未检测到 AMD 显卡")
+            gpuPopup.addItem(withTitle: "未检测到显卡")
             gpuPopup.isEnabled = false
             return
         }
@@ -112,9 +112,9 @@ final class InfoTabViewController: NSViewController {
     // MARK: - 版式定义
 
     private func buildRows(_ info: GPUInfo) -> [FormRow] {
-        func hex(_ v: UInt32?, _ w: Int) -> String { v.map { String(format: "0x%0\(w)X", $0) } ?? "—" }
-        func s(_ v: String?) -> String { (v?.isEmpty == false) ? v! : "—" }
-        func i(_ v: Int?, _ unit: String = "") -> String { v.map { "\($0)\(unit)" } ?? "未知" }
+        func hex(_ v: UInt32?, _ w: Int) -> String { v.map { String(format: "0x%0\(w)X", $0) } ?? "-" }
+        func s(_ v: String?) -> String { (v?.isEmpty == false) ? v! : "-" }
+        func i(_ v: Int?, _ unit: String = "") -> String { v.map { "\($0)\(unit)" } ?? (info.isAppleSilicon ? "-" : "未知") }
 
         var rows: [FormRow] = []
         rows.append(.section("显卡"))
@@ -137,21 +137,21 @@ final class InfoTabViewController: NSViewController {
         rows.append(.section("规格（型号参考值）"))
         rows.append(.cells([
             Cell(label: "流处理器", value: i(info.shaders)),
-            Cell(label: "TMU / ROP", value: info.tmus != nil ? "\(info.tmus!) / \(info.rops ?? 0)" : "未知"),
+            Cell(label: "TMU / ROP", value: info.tmus != nil ? "\(info.tmus!) / \(info.rops ?? 0)" : (info.isAppleSilicon ? "-" : "未知")),
             Cell(label: "计算单元", value: info.computeUnits.map { "\($0) CU" } ?? "未知"),
         ]))
         rows.append(.cells([
             Cell(label: "额定核心", value: i(info.ratedCoreMHz, " MHz")),
             Cell(label: "额定显存", value: i(info.ratedMemMHz, " MHz")),
-            Cell(label: "芯片规模", value: info.dieSizeMM2.map { "\($0)mm² / \(info.transistorsB ?? 0)B" } ?? "未知"),
+            Cell(label: "芯片规模", value: info.dieSizeMM2 != nil ? "\(info.dieSizeMM2!)mm² / \(info.transistorsB ?? 0)B" : (info.isAppleSilicon && info.transistorsB != nil ? "- / \(info.transistorsB!)B" : (info.isAppleSilicon ? "-" : "未知"))),
         ]))
 
         rows.append(.section("显存"))
         rows.append(.cells([
-            Cell(label: "容量", value: info.vramMB.map { "\($0) MB" } ?? "—"),
+            Cell(label: "容量", value: info.vramMB.map { "\($0) MB" } ?? "-"),
             Cell(label: "类型", value: s(info.vramType)),
             Cell(label: "颗粒厂商", value: s(info.memoryVendor)),
-            Cell(label: "位宽", value: info.busWidthBit.map { "\($0)-bit" } ?? "—"),
+            Cell(label: "位宽", value: info.busWidthBit.map { "\($0)-bit" } ?? "-"),
         ]))
 
         rows.append(.section("BIOS"))
@@ -222,7 +222,7 @@ final class InfoTabViewController: NSViewController {
 
     private func infoText() -> String {
         guard let info = info else { return "" }
-        var out = "Mac AMD GPU Info\n"
+        var out = "Mac GPU Info\n"
         for row in buildRows(info) {
             switch row {
             case .section(let t): out += "\n[\(t)]\n"
@@ -242,6 +242,7 @@ final class InfoTabViewController: NSViewController {
     }
 
     @objc private func exportVBIOS() {
+        if info?.isAppleSilicon == true { return }
         guard let bytes = info?.vbiosBytes, !bytes.isEmpty else { return }
         let panel = NSSavePanel()
         panel.nameFieldStringValue = "\(info?.biosPartNumber ?? "vbios").rom"

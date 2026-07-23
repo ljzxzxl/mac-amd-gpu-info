@@ -32,27 +32,28 @@ enum StatusBarMetric: String, CaseIterable {
         }
     }
 
-    /// 状态栏两行样式里“上面那行”的数值（带单位；数据缺失返回 nil）
-    func value(_ s: GPUStats) -> String? {
+    /// 状态栏两行样式里“上面那行”的数值（分为 数字 和 单位，数据缺失返回 nil）
+    func value(_ s: GPUStats) -> (num: String, unit: String)? {
         switch self {
-        case .temp: return s.tempC.map { "\($0)°C" }
-        case .fan: return s.fanRPM.map { "\($0)" }
-        case .power: return s.powerW.map { "\($0)W" }
-        case .activity: return s.activityPct.map { "\($0)%" }
-        case .util: return s.deviceUtilPct.map { "\($0)%" }
-        case .vram: return s.vramInUseMB.map { "\($0)M" }
-        case .coreClk: return s.coreMHz.map { "\($0)" }
-        case .memClk: return s.memMHz.map { "\($0)" }
+        case .temp: return s.tempC.map { ("\($0)", "°C") }
+        case .fan: return s.fanRPM.map { ("\($0)", "") }
+        case .power: return s.powerW.map { $0 < 1.0 ? ("\(Int($0*1000))", "mW") : (String(format: "%.1f", $0), "W") }
+        case .activity: return s.activityPct.map { ("\($0)", "%") }
+        case .util: return s.deviceUtilPct.map { ("\($0)", "%") }
+        case .vram: return s.vramInUseMB.map { ("\($0)", "M") }
+        case .coreClk: return s.coreMHz.map { ("\($0)", "") }
+        case .memClk: return s.memMHz.map { ("\($0)", "") }
         }
     }
 
     /// 下拉菜单里的明细行
     func detailText(_ s: GPUStats) -> String {
-        func f(_ v: Int?, _ u: String) -> String { v.map { "\($0) \(u)" } ?? "—" }
+        func f(_ v: Int?, _ u: String) -> String { v.map { "\($0) \(u)" } ?? "-" }
+        func fD(_ v: Double?, _ u: String) -> String { v.map { $0 < 1.0 ? "\(Int($0*1000)) mW" : String(format: "%.1f W", $0) } ?? "-" }
         switch self {
         case .temp: return "温度：\(f(s.tempC, "°C"))"
         case .fan: return "风扇：\(f(s.fanRPM, "RPM"))\(s.fanPct.map { " (\($0)%)" } ?? "")"
-        case .power: return "功耗：\(f(s.powerW, "W"))"
+        case .power: return "功耗：\(fD(s.powerW, "W"))"
         case .activity: return "GPU 活跃度：\(f(s.activityPct, "%"))"
         case .util: return "设备占用：\(f(s.deviceUtilPct, "%"))"
         case .vram: return "显存占用：\(f(s.vramInUseMB, "MB"))"

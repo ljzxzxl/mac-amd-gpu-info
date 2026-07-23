@@ -43,6 +43,7 @@ struct GPUInfo {
     var osVersion: String?
     var metalSupport: String?
     var driver: String?
+    var isAppleSilicon: Bool = false
 
     init(modelName: String) { self.modelName = modelName }
 }
@@ -56,7 +57,7 @@ struct GPUStats {
     var memMHz: Int?
     var activityPct: Int?
     var deviceUtilPct: Int?
-    var powerW: Int?
+    var powerW: Double?
     var vramInUseMB: Int?
     var vramTotalMB: Int?
 }

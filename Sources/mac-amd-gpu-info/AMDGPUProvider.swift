@@ -3,12 +3,12 @@ import IOKit
 import Metal
 
 /// 通过 IOKit 读取 AMD 独显的静态信息与实时传感器数据。只读、无需 root。
-enum GPUReader {
+struct AMDGPUProvider: GPUProvider {
 
     // MARK: - 静态信息
 
     /// 枚举所有 Radeon 独显（多卡），每项带稳定 registryID 作唯一键。
-    static func readAllInfos() -> [GPUInfo] {
+    func readAllInfos() -> [GPUInfo] {
         var result: [GPUInfo] = []
         var it: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMasterPortDefault,
@@ -40,7 +40,7 @@ enum GPUReader {
     }
 
     /// 首张 Radeon 的静态信息（无卡时返回占位）。
-    static func readInfo() -> GPUInfo {
+    func readInfo() -> GPUInfo {
         readAllInfos().first ?? {
             var info = GPUInfo(modelName: "未检测到 AMD 独显")
             info.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
@@ -50,7 +50,7 @@ enum GPUReader {
     }
 
     /// 从单个 IOPCIDevice 属性字典构建 GPUInfo（含 VBIOS、机型库、显存兜底）。
-    private static func buildInfo(from props: [String: Any]) -> GPUInfo {
+    private func buildInfo(from props: [String: Any]) -> GPUInfo {
         var info = GPUInfo(modelName: "AMD GPU")
         info.osVersion = ProcessInfo.processInfo.operatingSystemVersionString
         info.metalSupport = metalSupport()
@@ -102,7 +102,7 @@ enum GPUReader {
     }
 
     /// 从 `compatible` 属性解析 PCI 子系统厂商 ID（首个 `pciVVVV,DDDD` 令牌的 VVVV）。
-    private static func subsystemVendorID(from props: [String: Any]) -> UInt32? {
+    private func subsystemVendorID(from props: [String: Any]) -> UInt32? {
         guard let d = props["compatible"] as? Data else { return nil }
         let s = String(decoding: d, as: UTF8.self)
         for raw in s.split(whereSeparator: { $0 == "\u{0}" }) {
@@ -118,7 +118,7 @@ enum GPUReader {
 
     /// 无指定卡时的兜底：返回系统中第一张 AMD accelerator 的传感器读数。
     /// 正常路径请用 readStats(pciRegistryID:) 精确读取选中卡，避免多卡串号。
-    static func readStats() -> GPUStats? {
+    func readStats() -> GPUStats? {
         var it: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMasterPortDefault,
                                            IOServiceMatching("IOAccelerator"), &it) == KERN_SUCCESS else {
@@ -139,12 +139,12 @@ enum GPUReader {
     }
 
     /// AMD 显卡 accelerator 类名判定：覆盖 X4000(Polaris)/X5000(Vega)/X6000(Navi/RDNA) 各家族。
-    private static func isAMDAccelerator(_ cls: String) -> Bool {
+    private func isAMDAccelerator(_ cls: String) -> Bool {
         cls.contains("AMDRadeon") && cls.contains("Accelerator")
     }
 
     /// 读取指定 PCI 卡（按 registryID）的传感器：定位该 PCI 节点后向下遍历子树找到它自己的 accelerator。
-    static func readStats(pciRegistryID: UInt64) -> GPUStats? {
+    func readStats(pciRegistryID: UInt64) -> GPUStats? {
         var it: io_iterator_t = 0
         guard IOServiceGetMatchingServices(kIOMasterPortDefault,
                                            IORegistryEntryIDMatching(pciRegistryID), &it) == KERN_SUCCESS else {
@@ -158,7 +158,7 @@ enum GPUReader {
     }
 
     /// 在给定节点的子树（IOService 平面）中查找 AMD accelerator 并读 PerformanceStatistics。
-    private static func acceleratorStats(under node: io_object_t) -> GPUStats? {
+    private func acceleratorStats(under node: io_object_t) -> GPUStats? {
         if let cls = ioClassName(node), isAMDAccelerator(cls), let perf = perfStats(node) {
             return parseStats(perf)
         }
@@ -175,7 +175,7 @@ enum GPUReader {
     }
 
     /// 在给定 PCI 节点子树中查找 AMD accelerator 的类名（用于展示驱动家族，如 AMDRadeonX6000）。
-    private static func acceleratorClassName(under node: io_object_t) -> String? {
+    private func acceleratorClassName(under node: io_object_t) -> String? {
         if let cls = ioClassName(node), isAMDAccelerator(cls) { return cls }
         var child: io_iterator_t = 0
         guard IORegistryEntryGetChildIterator(node, kIOServicePlane, &child) == KERN_SUCCESS else { return nil }
@@ -189,13 +189,13 @@ enum GPUReader {
         return nil
     }
 
-    private static func perfStats(_ service: io_object_t) -> [String: Any]? {
+    private func perfStats(_ service: io_object_t) -> [String: Any]? {
         guard let prop = IORegistryEntryCreateCFProperty(service, "PerformanceStatistics" as CFString,
                                                          kCFAllocatorDefault, 0) else { return nil }
         return prop.takeRetainedValue() as? [String: Any]
     }
 
-    private static func parseStats(_ perf: [String: Any]) -> GPUStats {
+    private func parseStats(_ perf: [String: Any]) -> GPUStats {
         func i(_ k: String) -> Int? {
             if let n = perf[k] as? NSNumber { return n.intValue }
             return nil
@@ -208,20 +208,20 @@ enum GPUReader {
         s.memMHz = i("Memory Clock(MHz)")
         s.activityPct = i("GPU Activity(%)")
         s.deviceUtilPct = i("Device Utilization %")
-        s.powerW = i("Total Power(W)")
+        s.powerW = i("Total Power(W)").map { Double($0) }
         if let inUse = i("inUseVidMemoryBytes") { s.vramInUseMB = inUse / 1_048_576 }
         return s
     }
 
     // MARK: - 工具
 
-    private static func ioClassName(_ service: io_object_t) -> String? {
+    private func ioClassName(_ service: io_object_t) -> String? {
         var name = [CChar](repeating: 0, count: 128)
         guard IOObjectGetClass(service, &name) == KERN_SUCCESS else { return nil }
         return String(cString: name)
     }
 
-    static func propString(_ v: Any?) -> String? {
+    func propString(_ v: Any?) -> String? {
         if let s = v as? String { return s }
         if let d = v as? Data {
             return String(decoding: d, as: UTF8.self)
@@ -231,14 +231,14 @@ enum GPUReader {
         return nil
     }
 
-    private static func dataLE32(_ v: Any?) -> UInt32? {
+    private func dataLE32(_ v: Any?) -> UInt32? {
         guard let d = v as? Data else { return nil }
         var val: UInt32 = 0
         for (i, b) in d.prefix(4).enumerated() { val |= UInt32(b) << (8 * i) }
         return val
     }
 
-    private static func pcieString(_ status: Int?) -> String? {
+    private func pcieString(_ status: Int?) -> String? {
         guard let s = status else { return nil }
         let speeds = ["?", "2.5 GT/s (Gen1)", "5.0 GT/s (Gen2)", "8.0 GT/s (Gen3)"]
         let sp = speeds[min(s & 0xF, 3)]
@@ -246,9 +246,16 @@ enum GPUReader {
         return "PCIe ×\(width) @ \(sp)"
     }
 
-    private static func metalSupport() -> String? {
+    private func metalSupport() -> String? {
         guard let dev = MTLCreateSystemDefaultDevice() else { return nil }
-        if #available(macOS 13.0, *), dev.supportsFamily(.metal3) { return "Metal 3" }
-        return "Metal（\(dev.name)）"
+#if arch(arm64)
+        if #available(macOS 15.0, *) {
+            if dev.supportsFamily(MTLGPUFamily.apple9) { return "Metal 4" }
+        }
+#endif
+        if #available(macOS 13.0, *) {
+            if dev.supportsFamily(.metal3) { return "Metal 3" }
+        }
+        return "Metal (\(dev.name))"
     }
 }

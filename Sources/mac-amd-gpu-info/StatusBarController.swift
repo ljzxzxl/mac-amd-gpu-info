@@ -72,13 +72,13 @@ final class StatusBarController: NSObject {
         guard let item = statusItem, let button = item.button else { return }
         guard let s = GPUSelection.shared.readSelectedStats() else {
             button.image = nil
-            button.title = "无 AMD 显卡"
-            detailItems.values.forEach { $0.title = "未检测到 AMD 独显" }
+            button.title = "未检测到支持的 GPU"
+            detailItems.values.forEach { $0.title = "未检测到 GPU" }
             return
         }
         // 两行样式：每个开启指标一列，上值下缩写；整体绘成模板图精确竖直居中。
-        let cols: [(value: String, label: String)] = settings.enabledMetrics.compactMap { m in
-            m.value(s).map { (value: $0, label: m.abbr) }
+        let cols: [(num: String, unit: String, label: String)] = settings.enabledMetrics.compactMap { m in
+            m.value(s).map { (num: $0.num, unit: $0.unit, label: m.abbr) }
         }
         if cols.isEmpty {
             button.image = nil
@@ -92,9 +92,10 @@ final class StatusBarController: NSObject {
     }
 
     /// 把若干「上值 / 下缩写」两行列并排绘制成与菜单栏等高的模板图（参照 gpu-fan-monitor 两行效果）。
-    private func makeStackedImage(_ cols: [(value: String, label: String)]) -> NSImage? {
+    private func makeStackedImage(_ cols: [(num: String, unit: String, label: String)]) -> NSImage? {
         guard !cols.isEmpty else { return nil }
-        let valueFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .regular)
+        let numFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
+        let unitFont = NSFont.monospacedDigitSystemFont(ofSize: 11, weight: .semibold)
         let labelFont = NSFont.systemFont(ofSize: 7, weight: .medium)
         let height = NSStatusBar.system.thickness
         let colGap: CGFloat = 6
@@ -104,7 +105,10 @@ final class StatusBarController: NSObject {
         var valueSizes: [NSSize] = []
         var labelSizes: [NSSize] = []
         for c in cols {
-            let vs = (c.value as NSString).size(withAttributes: [.font: valueFont])
+            let numSize = (c.num as NSString).size(withAttributes: [.font: numFont])
+            let unitSize = (c.unit as NSString).size(withAttributes: [.font: unitFont])
+            let vs = NSSize(width: numSize.width + unitSize.width, height: max(numSize.height, unitSize.height))
+            
             let ls = (c.label as NSString).size(withAttributes: [.font: labelFont])
             valueSizes.append(vs)
             labelSizes.append(ls)
@@ -126,8 +130,11 @@ final class StatusBarController: NSObject {
             let cw = colWidths[i]
             (c.label as NSString).draw(at: NSPoint(x: x + (cw - labelSizes[i].width) / 2, y: startY),
                                        withAttributes: [.font: labelFont, .foregroundColor: NSColor.black])
-            (c.value as NSString).draw(at: NSPoint(x: x + (cw - valueSizes[i].width) / 2, y: startY + botLineH + gap),
-                                       withAttributes: [.font: valueFont, .foregroundColor: NSColor.black])
+            let valY = startY + botLineH + gap
+            let valX = x + (cw - valueSizes[i].width) / 2
+            (c.num as NSString).draw(at: NSPoint(x: valX, y: valY), withAttributes: [.font: numFont, .foregroundColor: NSColor.black])
+            let numSize = (c.num as NSString).size(withAttributes: [.font: numFont])
+            (c.unit as NSString).draw(at: NSPoint(x: valX + numSize.width, y: valY), withAttributes: [.font: unitFont, .foregroundColor: NSColor.black])
             // 指标之间画一条暗色分隔竖线（模板图下用低 alpha 实现“更暗”）
             if i < cols.count - 1 {
                 let dx = (x + cw + colGap / 2).rounded()

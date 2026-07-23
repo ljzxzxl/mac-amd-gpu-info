@@ -3,9 +3,9 @@ import AppKit
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private var windowController: MainWindowController?
     private var statusBar: StatusBarController!
-    private let appName = "Mac AMD GPU Info"
+    private let appName = "Mac GPU Info"
     // 版本号统一从 Bundle 的 CFBundleShortVersionString 读取，避免与 Info.plist/VERSION 漂移。
-    private let versionString = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.3"
+    private let versionString = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.4.0"
 
     private var isCheckingUpdate = false
 
@@ -14,6 +14,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+
+        // 启动时静默启动提权或请求提权（仅在 Apple Silicon 上）
+        PowermetricsHelper.shared.startIfNeeded()
+
         if let path = Bundle.main.path(forResource: "AppIcon", ofType: "png"),
            let img = NSImage(contentsOfFile: path) {
             NSApp.applicationIconImage = img
@@ -148,7 +152,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .applicationVersion: versionString,
             NSApplication.AboutPanelOptionKey(rawValue: "Version"): versionString,
             .credits: NSAttributedString(
-                string: "Intel Mac + AMD 独显信息与监控工具\n数据来自 IOKit，只读；仅在检查更新时访问 GitHub",
+                string: "Mac 显卡信息与监控工具 (支持 AMD 独显与 Apple Silicon)\n数据来自 IOKit，只读；仅在检查更新时访问 GitHub",
                 attributes: [.font: NSFont.systemFont(ofSize: 11)]
             ),
         ])
