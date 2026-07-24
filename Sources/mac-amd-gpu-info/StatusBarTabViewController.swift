@@ -6,8 +6,9 @@ final class StatusBarTabViewController: NSViewController {
     private let settings = StatusBarSettings.shared
     private var masterSwitch: NSButton!
     private var autostartSwitch: NSButton!
+    private var gpuPopup: NSPopUpButton?
     private var metricSwitches: [NSButton] = []       // 顺序对应 StatusBarMetric.allCases
-    private var dependentControls: [NSButton] = []    // 主开关关闭时置灰
+    private var dependentControls: [NSControl] = []   // 主开关关闭时置灰
 
     override func loadView() {
         let container = NSView(frame: NSRect(x: 0, y: 0, width: 560, height: 600))
@@ -41,6 +42,29 @@ final class StatusBarTabViewController: NSViewController {
             doc.addSubview(cb)
         }
         y += CGFloat((StatusBarMetric.allCases.count + 1) / 2) * 28 + 24
+
+        // 多显卡时：选择状态栏显示哪张卡的传感器
+        let gpus = GPUSelection.shared.gpus
+        if gpus.count >= 2 {
+            let glabel = UI.label("状态栏显示：", size: 12, color: .secondaryLabelColor)
+            glabel.frame = NSRect(x: leftM, y: y + 4, width: 90, height: 16)
+            doc.addSubview(glabel)
+
+            let popup = NSPopUpButton(frame: NSRect(x: leftM + 90, y: y - 1, width: 380, height: 26))
+            popup.target = self
+            popup.action = #selector(changeGPU(_:))
+            popup.addItem(withTitle: "跟随主界面选择")
+            for g in gpus { popup.addItem(withTitle: g.modelName) }
+            if let rid = settings.gpuRegistryID, let idx = gpus.firstIndex(where: { $0.registryID == rid }) {
+                popup.selectItem(at: idx + 1)
+            } else {
+                popup.selectItem(at: 0)
+            }
+            doc.addSubview(popup)
+            gpuPopup = popup
+            dependentControls.append(popup)
+            y += 40
+        }
 
         autostartSwitch = NSButton(checkboxWithTitle: "状态栏随开机自动启动（登录后进入纯状态栏模式）",
                                    target: self, action: #selector(toggleAutostart))
@@ -83,6 +107,16 @@ final class StatusBarTabViewController: NSViewController {
     @objc private func toggleMetric(_ sender: NSButton) {
         let m = StatusBarMetric.allCases[sender.tag]
         settings.setMetric(m, sender.state == .on)
+    }
+
+    @objc private func changeGPU(_ sender: NSPopUpButton) {
+        let idx = sender.indexOfSelectedItem
+        let gpus = GPUSelection.shared.gpus
+        if idx <= 0 {
+            settings.gpuRegistryID = nil            // 跟随主界面
+        } else if idx - 1 < gpus.count {
+            settings.gpuRegistryID = gpus[idx - 1].registryID
+        }
     }
 
     @objc private func toggleAutostart() {

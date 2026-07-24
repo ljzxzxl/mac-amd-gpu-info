@@ -59,6 +59,7 @@ struct IntelGPUProvider: GPUProvider {
         info.vendorID = dataLE32(props["vendor-id"])
         info.revisionID = dataLE32(props["revision-id"])
         info.vramType = "共享（系统内存）"   // 核显无独立显存
+        info.vramMB = acceleratorVRAM(under: service)   // 从 IntelAccelerator 的 VRAM,totalMB 取共享上限
 
         if let did = info.deviceID, let spec = DeviceDatabase.intelSpec(deviceID: did) {
             if propString(props["model"]) == nil { info.modelName = spec.name }
@@ -83,8 +84,10 @@ struct IntelGPUProvider: GPUProvider {
         defer { IOObjectRelease(it) }
         let accel = IOIteratorNext(it)
         defer { if accel != 0 { IOObjectRelease(accel) } }
-        guard accel != 0, let perf = perfStats(accel) else { return nil }
-        return parseStats(perf)
+        var s = GPUStats()
+        if accel != 0, let perf = perfStats(accel) { s = parseStats(perf) }
+        augment(&s)
+        return s
     }
 
     func readStats(pciRegistryID: UInt64) -> GPUStats? {
@@ -97,7 +100,57 @@ struct IntelGPUProvider: GPUProvider {
         let pci = IOIteratorNext(it)
         defer { if pci != 0 { IOObjectRelease(pci) } }
         guard pci != 0 else { return nil }
-        return acceleratorStats(under: pci)
+        if var s = acceleratorStats(under: pci) { augment(&s); return s }
+        return nil
+    }
+
+    /// 核显没有独立的温度/频率/功耗/风扇传感器，用 CPU/内存侧数据补齐：
+    /// - 温度/风扇/功耗：SMC（CPU 温度、CPU 风扇、CPU 封装功耗，免 root）
+    /// - 核心频率：CPU 标称频率（sysctl，A 方案）
+    /// - 显存频率：系统内存速度（后台探测一次并缓存）
+    private func augment(_ s: inout GPUStats) {
+        if s.tempC == nil { s.tempC = SMCClient.cpuTemperature() }
+        if s.fanRPM == nil { s.fanRPM = SMCClient.cpuFanRPM() }
+        if s.powerW == nil { s.powerW = SMCClient.cpuPowerW() }
+        if s.coreMHz == nil { s.coreMHz = Self.nominalCPUMHz }
+        Self.ensureRAMProbe()
+        if s.memMHz == nil { s.memMHz = Self.ramSpeedMHz }
+        // 已授权则用 powermetrics 的 CPU 实时频率覆盖标称值（A→C 升级）
+        PowermetricsHelper.shared.fillStats(&s)
+    }
+
+    /// CPU 标称频率（MHz），sysctl 取一次。
+    static let nominalCPUMHz: Int? = {
+        var f: UInt64 = 0
+        var sz = MemoryLayout<UInt64>.size
+        if sysctlbyname("hw.cpufrequency", &f, &sz, nil, 0) == 0, f > 0 { return Int(f / 1_000_000) }
+        return nil
+    }()
+
+    // 内存速度：system_profiler 较慢，后台探测一次并缓存，避免阻塞刷新。
+    private static var ramSpeedMHz: Int?
+    private static var ramProbed = false
+    private static func ensureRAMProbe() {
+        if ramProbed { return }
+        ramProbed = true
+        DispatchQueue.global(qos: .utility).async {
+            let v = probeRAMSpeed()
+            DispatchQueue.main.async { ramSpeedMHz = v }
+        }
+    }
+    private static func probeRAMSpeed() -> Int? {
+        let p = Process()
+        p.launchPath = "/usr/sbin/system_profiler"
+        p.arguments = ["SPMemoryDataType"]
+        let pipe = Pipe()
+        p.standardOutput = pipe
+        p.standardError = Pipe()
+        do { try p.run() } catch { return nil }
+        let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        p.waitUntilExit()
+        guard let out = String(data: data, encoding: .utf8),
+              let r = out.range(of: #"[0-9]{3,5}\s*MHz"#, options: .regularExpression) else { return nil }
+        return Int(out[r].filter { $0.isNumber })
     }
 
     /// 在子树中查找 IntelAccelerator 并读 PerformanceStatistics。
@@ -126,7 +179,10 @@ struct IntelGPUProvider: GPUProvider {
         var s = GPUStats()
         let util = i("Device Utilization %")
         s.deviceUtilPct = util
-        s.activityPct = util
+        // 活跃度取各引擎单元利用率的最大值（更贴近“瞬时繁忙”）；无则回退整体利用率
+        let units = [i("Device Unit 0 Utilization %"), i("Device Unit 1 Utilization %"),
+                     i("Device Unit 2 Utilization %"), i("Device Unit 3 Utilization %")].compactMap { $0 }
+        s.activityPct = units.max() ?? util
         // gartUsedBytes 作为共享内存占用的可靠代理（inUseSysMemoryBytes 常为回绕的异常大值，不用）。
         if let gart = i("gartUsedBytes"), gart > 0 { s.vramInUseMB = gart / 1_048_576 }
         return s
@@ -134,8 +190,26 @@ struct IntelGPUProvider: GPUProvider {
 
     // MARK: - 工具
 
-    private func hasIntelAccelerator(under node: io_object_t) -> Bool {
-        if let cls = ioClassName(node), cls == "IntelAccelerator" { return true }
+    /// 从子树里的 IntelAccelerator 读取共享显存上限（VRAM,totalMB）。
+    private func acceleratorVRAM(under node: io_object_t) -> Int? {
+        if let cls = ioClassName(node), cls == "IntelAccelerator",
+           let v = IORegistryEntryCreateCFProperty(node, "VRAM,totalMB" as CFString,
+                                                   kCFAllocatorDefault, 0)?.takeRetainedValue() as? Int {
+            return v
+        }
+        var child: io_iterator_t = 0
+        guard IORegistryEntryGetChildIterator(node, kIOServicePlane, &child) == KERN_SUCCESS else { return nil }
+        defer { IOObjectRelease(child) }
+        var c = IOIteratorNext(child)
+        while c != 0 {
+            if let v = acceleratorVRAM(under: c) { IOObjectRelease(c); return v }
+            IOObjectRelease(c)
+            c = IOIteratorNext(child)
+        }
+        return nil
+    }
+
+    private func hasIntelAccelerator(under node: io_object_t) -> Bool {        if let cls = ioClassName(node), cls == "IntelAccelerator" { return true }
         var child: io_iterator_t = 0
         guard IORegistryEntryGetChildIterator(node, kIOServicePlane, &child) == KERN_SUCCESS else { return false }
         defer { IOObjectRelease(child) }

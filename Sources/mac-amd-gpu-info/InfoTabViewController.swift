@@ -114,7 +114,7 @@ final class InfoTabViewController: NSViewController {
     private func buildRows(_ info: GPUInfo) -> [FormRow] {
         func hex(_ v: UInt32?, _ w: Int) -> String { v.map { String(format: "0x%0\(w)X", $0) } ?? "-" }
         func s(_ v: String?) -> String { (v?.isEmpty == false) ? v! : "-" }
-        func i(_ v: Int?, _ unit: String = "") -> String { v.map { "\($0)\(unit)" } ?? (info.isAppleSilicon ? "-" : "未知") }
+        func i(_ v: Int?, _ unit: String = "") -> String { v.map { "\($0)\(unit)" } ?? "-" }
 
         var rows: [FormRow] = []
         rows.append(.section("显卡"))
@@ -137,13 +137,13 @@ final class InfoTabViewController: NSViewController {
         rows.append(.section("规格（型号参考值）"))
         rows.append(.cells([
             Cell(label: "流处理器", value: i(info.shaders)),
-            Cell(label: "TMU / ROP", value: info.tmus != nil ? "\(info.tmus!) / \(info.rops ?? 0)" : (info.isAppleSilicon ? "-" : "未知")),
-            Cell(label: "计算单元", value: info.computeUnits.map { "\($0) CU" } ?? "未知"),
+            Cell(label: "TMU / ROP", value: info.tmus != nil ? "\(info.tmus!) / \(info.rops ?? 0)" : "-"),
+            Cell(label: "计算单元", value: info.computeUnits.map { "\($0) CU" } ?? "-"),
         ]))
         rows.append(.cells([
             Cell(label: "额定核心", value: i(info.ratedCoreMHz, " MHz")),
             Cell(label: "额定显存", value: i(info.ratedMemMHz, " MHz")),
-            Cell(label: "芯片规模", value: info.dieSizeMM2 != nil ? "\(info.dieSizeMM2!)mm² / \(info.transistorsB ?? 0)B" : (info.isAppleSilicon && info.transistorsB != nil ? "- / \(info.transistorsB!)B" : (info.isAppleSilicon ? "-" : "未知"))),
+            Cell(label: "芯片规模", value: info.dieSizeMM2 != nil ? "\(info.dieSizeMM2!)mm² / \(info.transistorsB ?? 0)B" : (info.transistorsB != nil ? "- / \(info.transistorsB!)B" : "-")),
         ]))
 
         rows.append(.section("显存"))

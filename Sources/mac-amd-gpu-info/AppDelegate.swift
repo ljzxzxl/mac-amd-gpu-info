@@ -16,7 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidFinishLaunching(_ notification: Notification) {
 
         // 启动时静默启动提权或请求提权（仅在 Apple Silicon 上）
-        PowermetricsHelper.shared.startIfNeeded()
+        // Apple Silicon 启动时自动申请提权采集；Intel 核显走按钮按需授权，避免每次启动弹窗
+        if AppleSiliconGPUProvider.isSupported() {
+            PowermetricsHelper.shared.startIfNeeded()
+        }
 
         if let path = Bundle.main.path(forResource: "AppIcon", ofType: "png"),
            let img = NSImage(contentsOfFile: path) {

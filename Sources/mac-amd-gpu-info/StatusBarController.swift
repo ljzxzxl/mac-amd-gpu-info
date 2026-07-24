@@ -70,7 +70,7 @@ final class StatusBarController: NSObject {
 
     @objc private func refresh() {
         guard let item = statusItem, let button = item.button else { return }
-        guard let s = GPUSelection.shared.readSelectedStats() else {
+        guard let s = statusStats() else {
             button.image = nil
             button.title = "未检测到支持的 GPU"
             detailItems.values.forEach { $0.title = "未检测到 GPU" }
@@ -89,6 +89,15 @@ final class StatusBarController: NSObject {
             button.imagePosition = .imageOnly
         }
         for m in StatusBarMetric.allCases { detailItems[m]?.title = m.detailText(s) }
+    }
+
+    /// 状态栏取数：按「状态栏显示哪张卡」设置；未设置或该卡已不存在则跟随主界面选择。
+    private func statusStats() -> GPUStats? {
+        if let rid = settings.gpuRegistryID,
+           GPUSelection.shared.gpus.contains(where: { $0.registryID == rid }) {
+            return GPUReader.readStats(pciRegistryID: rid)
+        }
+        return GPUSelection.shared.readSelectedStats()
     }
 
     /// 把若干「上值 / 下缩写」两行列并排绘制成与菜单栏等高的模板图（参照 gpu-fan-monitor 两行效果）。

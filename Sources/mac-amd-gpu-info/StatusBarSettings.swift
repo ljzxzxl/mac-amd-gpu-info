@@ -8,6 +8,7 @@ final class StatusBarSettings {
     private let d = UserDefaults.standard
     private let kEnabled = "statusbar.enabled"
     private let kAutostart = "statusbar.autostart"
+    private let kGPU = "statusbar.gpu"
     private func metricKey(_ m: StatusBarMetric) -> String { "statusbar.metric.\(m.rawValue)" }
 
     var enabled: Bool {
@@ -31,6 +32,12 @@ final class StatusBarSettings {
 
     var enabledMetrics: [StatusBarMetric] {
         StatusBarMetric.allCases.filter { isMetricOn($0) }
+    }
+
+    /// 状态栏显示哪张卡的传感器：nil = 跟随主界面选择；否则为指定卡的 PCI registryID。
+    var gpuRegistryID: UInt64? {
+        get { d.string(forKey: kGPU).flatMap { UInt64($0) } }
+        set { d.set(newValue.map(String.init), forKey: kGPU); notify() }
     }
 
     private func defaultOn(_ m: StatusBarMetric) -> Bool {
