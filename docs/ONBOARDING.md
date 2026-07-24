@@ -1,6 +1,6 @@
 # Mac AMD GPU Info — 交接文档 (ONBOARDING)
 
-> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目。原"当前待办问题"已修复；`v1.2.0` 新增多显卡切换；`v1.3.0` 新增自动检查更新；`v1.4.0` 迎来架构巨变，正式支持 **Apple Silicon (M系列芯片)** 及按需系统提权采集高级数据（第 10 节）。
+> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目。原"当前待办问题"已修复；`v1.2.0` 新增多显卡切换；`v1.3.0` 新增自动检查更新；`v1.4.0` 迎来架构巨变，正式支持 **Apple Silicon (M系列芯片)** 及按需系统提权采集高级数据（第 12 节）；`v1.5.0` 新增 **Intel 核显 (iGPU)** 支持与状态栏显卡选择（第 13 节）。
 
 ---
 
@@ -9,7 +9,7 @@
 macOS 下没有 GPU-Z，本项目是面向 **Intel Mac（含黑苹果）+ AMD 独显** 的「GPU 信息查看 + 传感器实时监控」桌面应用（对标 GPU-Z + 腾讯柠檬状态栏）。纯 **只读、无需 root、不改系统设置**（仅在检查更新时访问 GitHub Releases）。
 
 - 仓库：`git@github.com:ljzxzxl/mac-amd-gpu-info.git`（分支 `main`，默认推送 `origin`）
-- 已发布：`v1.0.0`~`v1.3.0`（AMD 核心迭代），`v1.4.0`（Apple Silicon M芯片双架构支持与按需提权）
+- 已发布：`v1.0.0`~`v1.3.0`（AMD 核心迭代），`v1.4.0`（Apple Silicon M芯片双架构支持与按需提权），`v1.5.0`（Intel 核显支持 + 状态栏显卡选择）
 - 语言/UI：Swift + AppKit（无 SwiftUI、无 Storyboard，纯代码构建）
 
 ### 背景结论（重要进化）
@@ -48,15 +48,18 @@ bash packaging/make-dmg.sh      # 生成 dist/ 下 DMG + SHA256
 | `GPUModels.swift` | `GPUInfo`（静态，含每卡唯一键 `registryID`/`pciLocation`）与 `GPUStats`（传感器）数据模型 |
 | `GPUReader.swift` | **IOKit 读取核心**：多卡枚举 `readAllInfos()` + 按卡传感器 `readStats(pciRegistryID:)` + PCIe + Metal + 品牌兜底 |
 | `GPUSelection.swift` | **多卡选中源单例**：卡列表 + 当前 `registryID`，联动信息页/传感器页/状态栏 |
+| `GPUProvider.swift` / `AMDGPUProvider` / `AppleSiliconGPUProvider` / `IntelGPUProvider` / `CompositeGPUProvider` | GPU 数据源协议与各实现；Intel Mac 用 `Composite([AMD, Intel])` 聚合独显+核显，按 `registryID` 路由 |
+| `SMCClient.swift` | 真·SMC 读取器（80 字节缓冲+明确偏移），核显场景读 CPU 温度(TC0P)/风扇(F0Ac)/功耗(PCPT,sp96)，免 root |
+| `PowermetricsHelper.swift` | 提权 `powermetrics` 数据泵：Apple Silicon GPU 功耗/频率；Intel CPU 实时频率（核显核心频率的 C 方案，A 兜底为标称频率） |
 | `VBIOSDecoder.swift` | 从 VBIOS 二进制抽取料号/ATOMBIOS/日期/板卡/子系统/颗粒厂商/品牌 |
 | `DeviceDatabase.swift` | **device-id → 芯片规格**（系统读不到的着色器/位宽/die 等）；**子系统厂商 ID → AIB 品牌** |
 | `InfoTabViewController.swift` | 信息页：GPU-Z 式版式，右键复制/hover 展开/导出；**底部「导出 VBIOS」右侧的显卡切换下拉框** |
 | `SensorsTabViewController.swift` | 传感器页：顶部数值网格 + 六条曲线，**按选中卡刷新**、显存上限用该卡 `vramMB` |
 | `SensorGraphView.swift` | 自绘折线图（环形缓冲、图例带含义备注、半透明填充） |
 | `StatusBarMetric.swift` | 状态栏 8 指标定义（`abbr` 英文缩写 / `value` 带单位值 / `detailText` 明细） |
-| `StatusBarSettings.swift` | 状态栏设置（UserDefaults + 变更通知） |
-| `StatusBarController.swift` | `NSStatusItem` **两行样式模板图**刷新（上值下缩写 + 暗色分隔竖线）+ 下拉菜单（2s，含「检查更新…」）；**跟随选中卡**（回退首张） |
-| `StatusBarTabViewController.swift` | 「状态栏」标签页：主开关 + 8 指标开关 + 自启动开关 |
+| `StatusBarSettings.swift` | 状态栏设置（UserDefaults + 变更通知；含 `gpuRegistryID`：状态栏显示哪张卡，nil=跟随主界面） |
+| `StatusBarController.swift` | `NSStatusItem` **两行样式模板图**刷新（上值下缩写 + 暗色分隔竖线）+ 下拉菜单（2s，含「检查更新…」）；按 `gpuRegistryID` 取数，未设置则跟随选中卡 |
+| `StatusBarTabViewController.swift` | 「状态栏」标签页：主开关 + 8 指标开关 + 自启动开关 + **多卡时的「状态栏显示」显卡下拉** |
 | `LoginItem.swift` | `SMAppService` 登录自启动封装 |
 | `Updater.swift` | **检查更新**：查询 GitHub `releases/latest`、语义版本比较、下载 DMG 到「下载」并 `NSWorkspace.open` 打开安装窗 |
 | `UIComponents.swift` | `CopyableLabel`（右键复制）、`FlippedView`、`UI.label`/`UI.valueBox` 工厂 |
@@ -179,16 +182,34 @@ ioreg -rw0 -c IOPCIDevice | grep -o '"ATY,bin_image" = <[0-9a-f]*>' | head -1 \
 - **多卡**：下拉框列出全部卡；切换后信息页/传感器页/状态栏均正确切换、互不串号；Navi 卡传感器正常、品牌显示 AIB 厂商。
 - **顶栏两行**：开启状态栏后每指标显示两行（上值下缩写）、列间有暗色竖线、整体竖直居中不溢出。
 - **检查更新**：菜单/状态栏「检查更新…」三态正常；发现新版可下载并弹出安装窗（本机版本高于线上时，启动不弹更新属正常）。
+- **Intel 核显**：下拉框出现核显；信息页显示型号/共享显存(2048MB)/规格、无关项为 `-`；传感器温度/风扇/功耗有值（SMC），负载/内存有值，核心频率标称→授权后实时。
+- **状态栏选卡**：多卡时「状态栏」页出现「状态栏显示」下拉；选具体卡后状态栏固定显示该卡、与主界面选择解耦。
 
 ## 11. 约定
 
 - 提交信息用中文、说明动机；只改必要文件；不引入 SwiftUI/Xcode 依赖。
 - 发布走 tag（`git tag -a vX.Y.Z -m "..." && git push origin vX.Y.Z`），CI 自动出 DMG Release。若未配置 CI，可直接在 GitHub Releases 面板手动发布或使用 `gh release create`。
 
-## 10. 【v1.4.0】Apple Silicon 架构与授权引擎
+## 12. 【v1.4.0】Apple Silicon 架构与授权引擎
 
 为支持 M 芯片的获取，本次重构了底层获取方式：
 - **`GPUProvider.swift`**：统一的双端协议抽象。
 - **`AppleSiliconGPUProvider.swift`**：免 Root 读取 Metal 特性、系统内存带宽以及 PMU `tdie` SoC 综合温度。
 - **UI 动态降级与内联授权**：将原本无法无权读取的“显存频率、风扇”平滑回退为 `-`，而在“核心频率、功耗”项置入原生的 `NSButton(bezelStyle: .inline)` 授权按钮。
 - **`PowermetricsHelper.swift`**：通过 `NSAppleScript` 和底层 `powermetrics` C 接口，以极高频 (1000ms) 搭建数据泵。并利用事件总线 `NotificationCenter` 在授权过审的毫秒内实现前端 UI 界面的重绘（消除轮询卡顿感）。
+
+## 13. 【v1.5.0】Intel 核显 (iGPU) 支持 + 状态栏显卡选择
+
+**Intel 核显支持**（本机 UHD 630 `0x3E9B`）——复用 `GPUProvider` 协议新增 `IntelGPUProvider`，Intel Mac 上用 `CompositeGPUProvider([AMDGPUProvider(), IntelGPUProvider()])` 同时呈现独显与核显：
+- **枚举**：`vendor-id 0x8086` 且子树含 `IntelAccelerator` 的显示控制器。
+- **显存**：从 `IntelAccelerator` 节点的 `VRAM,totalMB` 取共享上限（本机 2048MB），类型标“共享（系统内存）”。
+- **规格**：`DeviceDatabase.intelSpec`（UHD 630/HD 630/Iris 5xx 等，EU→计算单元、EU×8→着色器）。
+- **传感器（核显自身只有负载/内存，其余用 CPU/内存代理）**：
+  - 负载/占用：`Device Utilization %`（占用=整体、活跃=各 `Device Unit N` 利用率最大值）；内存占用=`gartUsedBytes`。
+  - 温度/风扇/功耗：`SMCClient` 读 CPU 的 `TC0P`/`F0Ac`/`PCPT(sp96)`（免 root；与 iStatistica 同源）。
+  - 核心频率：CPU 标称频率（`sysctl hw.cpufrequency`，A 方案）；点核心频率旁 🔒 授权后用 `PowermetricsHelper`(Intel `cpu_power`) 升级为实时频率（C），拒绝则保留标称（A 兜底）。
+  - 显存频率：系统内存速度（`system_profiler` 后台探测一次并缓存）。
+- **信息页**：所有“未知”统一改为 `-`。
+- **踩坑**：①`SMCReader`（那个基于 IOHIDEvent 读 SoC 温度的）与新 `SMCClient`（真 AppleSMC）不是一回事，勿混名；②真 SMC 读取的 `SMCKeyData` 必须是 **80 字节**，用固定字节缓冲+偏移（key@0,data8@42,dataSize@28,dataType@32,result@40,bytes@48）最稳，Swift 结构体镜像易因对齐算错（曾错成 76 字节导致全部读不到）；③`MTLGPUFamily.apple9` 旧 SDK 无此枚举 → 用 `MTLGPUFamily(rawValue: 1009)` 规避编译失败。
+
+**状态栏显卡选择**——`StatusBarSettings.gpuRegistryID`（nil=跟随主界面选择，否则指定卡 registryID）；「状态栏」页在**多卡时**出现「状态栏显示：」下拉；`StatusBarController.statusStats()` 按此取数，卡不存在时回退跟随。
