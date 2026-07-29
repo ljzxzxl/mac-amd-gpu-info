@@ -24,6 +24,20 @@ final class SensorGraphView: NSView {
     private let leftPad: CGFloat = 34
     private let pad: CGFloat = 5
 
+    // 文本样式为不变量，提到静态常量避免 1Hz 重绘时反复构造字体与字典。
+    private static let legendAttrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 10),
+        .foregroundColor: NSColor.secondaryLabelColor,
+    ]
+    private static let noteAttrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 9),
+        .foregroundColor: NSColor.tertiaryLabelColor,
+    ]
+    private static let tickAttrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 8),
+        .foregroundColor: NSColor.tertiaryLabelColor,
+    ]
+
     func configure(_ series: [GraphSeries]) {
         configs = series
         buffers = series.map { _ in [] }
@@ -61,21 +75,14 @@ final class SensorGraphView: NSView {
             NSBezierPath(roundedRect: NSRect(x: x, y: y + 2, width: 9, height: 9), xRadius: 2, yRadius: 2).fill()
             let latest = buffers[i].last
             let text = latest.map { "\(cfg.label) \(Int($0)) \(cfg.unit)" } ?? cfg.label
-            let s = NSAttributedString(string: text, attributes: [
-                .font: NSFont.systemFont(ofSize: 10),
-                .foregroundColor: NSColor.secondaryLabelColor,
-            ])
+            let s = NSAttributedString(string: text, attributes: Self.legendAttrs)
             s.draw(at: NSPoint(x: x + 13, y: y))
             x += 13 + s.size().width + 16
         }
 
         // 右侧含义备注
         if !note.isEmpty {
-            let attr: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 9),
-                .foregroundColor: NSColor.tertiaryLabelColor,
-            ]
-            let n = NSAttributedString(string: note, attributes: attr)
+            let n = NSAttributedString(string: note, attributes: Self.noteAttrs)
             let nx = bounds.maxX - n.size().width - 6
             if nx > x { n.draw(at: NSPoint(x: nx, y: y + 1)) }
         }
@@ -92,13 +99,9 @@ final class SensorGraphView: NSView {
             p.stroke()
         }
         if let maxV = configs.first?.maxValue {
-            let attr: [NSAttributedString.Key: Any] = [
-                .font: NSFont.systemFont(ofSize: 8),
-                .foregroundColor: NSColor.tertiaryLabelColor,
-            ]
             for f in [0.0, 0.5, 1.0] {
                 let yy = plot.minY + plot.height * CGFloat(f)
-                NSAttributedString(string: "\(Int(maxV * f))", attributes: attr)
+                NSAttributedString(string: "\(Int(maxV * f))", attributes: Self.tickAttrs)
                     .draw(at: NSPoint(x: bounds.minX + 3, y: yy - 5))
             }
         }

@@ -1,6 +1,6 @@
 import AppKit
 
-final class MainWindowController: NSWindowController {
+final class MainWindowController: NSWindowController, NSWindowDelegate {
     private let infoVC = InfoTabViewController()
     private let sensorsVC = SensorsTabViewController()
     private let statusVC = StatusBarTabViewController()
@@ -13,6 +13,7 @@ final class MainWindowController: NSWindowController {
                               backing: .buffered, defer: false)
         window.title = "Mac GPU Info"
         super.init(window: window)
+        window.delegate = self
 
         // 枚举所有显卡并初始化选中源
         infos = GPUReader.readAllInfos()
@@ -63,6 +64,16 @@ final class MainWindowController: NSWindowController {
         window.center()
 
         _ = sensorsVC.view
+        sensorsVC.start()
+    }
+
+    /// 窗口关闭后应用常驻状态栏，此时必须停掉传感器页的 1Hz 采集与曲线重绘；重新打开时再恢复。
+    func windowWillClose(_ notification: Notification) {
+        sensorsVC.stop()
+    }
+
+    override func showWindow(_ sender: Any?) {
+        super.showWindow(sender)
         sensorsVC.start()
     }
 

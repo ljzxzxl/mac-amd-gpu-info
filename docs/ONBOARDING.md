@@ -1,6 +1,6 @@
 # Mac AMD GPU Info — 交接文档 (ONBOARDING)
 
-> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目。原"当前待办问题"已修复；`v1.2.0` 新增多显卡切换；`v1.3.0` 新增自动检查更新；`v1.4.0` 迎来架构巨变，正式支持 **Apple Silicon (M系列芯片)** 及按需系统提权采集高级数据（第 12 节）；`v1.5.0` 新增 **Intel 核显 (iGPU)** 支持与状态栏显卡选择（第 13 节）。
+> 目的：让你在**另一台机器的全新会话**中，仅凭此文档就能快速接手本项目。原"当前待办问题"已修复；`v1.2.0` 新增多显卡切换；`v1.3.0` 新增自动检查更新；`v1.4.0` 迎来架构巨变，正式支持 **Apple Silicon (M系列芯片)** 及按需系统提权采集高级数据（第 12 节）；`v1.5.0` 新增 **Intel 核显 (iGPU)** 支持与状态栏显卡选择（第 13 节）；`v1.5.1` 用 **IOReport 免提权采集**取代 M 芯片的提权 helper，并修掉进程泄漏与状态栏高负载（第 14 节，**必读**）。
 
 ---
 
@@ -9,7 +9,7 @@
 macOS 下没有 GPU-Z，本项目是面向 **Intel Mac（含黑苹果）+ AMD 独显** 的「GPU 信息查看 + 传感器实时监控」桌面应用（对标 GPU-Z + 腾讯柠檬状态栏）。纯 **只读、无需 root、不改系统设置**（仅在检查更新时访问 GitHub Releases）。
 
 - 仓库：`git@github.com:ljzxzxl/mac-amd-gpu-info.git`（分支 `main`，默认推送 `origin`）
-- 已发布：`v1.0.0`~`v1.3.0`（AMD 核心迭代），`v1.4.0`（Apple Silicon M芯片双架构支持与按需提权），`v1.5.0`（Intel 核显支持 + 状态栏显卡选择）
+- 已发布：`v1.0.0`~`v1.3.0`（AMD 核心迭代），`v1.4.0`（Apple Silicon M芯片双架构支持与按需提权），`v1.5.0`（Intel 核显支持 + 状态栏显卡选择），`v1.5.1`（IOReport 免提权采集 + 性能与安全重构）
 - 语言/UI：Swift + AppKit（无 SwiftUI、无 Storyboard，纯代码构建）
 
 ### 背景结论（重要进化）
@@ -17,7 +17,7 @@ macOS 下没有 GPU-Z，本项目是面向 **Intel Mac（含黑苹果）+ AMD �
 **在 `v1.4.0` 开始，项目架构大破大立**，正式兼容了苹果自研的 **Apple Silicon (M系列 SoC)** 芯片：
 - 引入了 `GPUProvider` 协议，将 AMD 与 Apple Silicon 取值逻辑彻底物理隔离。
 - 对于 Apple Silicon，从 `AGXAccelerator` 和 `AppleSMC` 读出其统一内存、架构信息、核心温度。
-- 由于 M 芯片的核心频率与功耗受 macOS 原生底层隔离保护，引入了**按需无感驻留的提权服务 (`PowermetricsHelper`)**：用户可点击带 🔒 图标的输入框，系统输入密码后即刻打通管道，实现高级极客参数的秒级点亮。
+- 由于 M 芯片的核心频率与功耗不在 IORegistry 暴露，`v1.4.0`~`v1.5.0` 曾用提权 `powermetrics` 采集；**`v1.5.1` 已改为直接对接 `IOReport`（powermetrics 的底层数据源），全程免 root、无子进程、无临时文件**（见第 14 节）。
 
 ---
 
@@ -46,11 +46,12 @@ bash packaging/make-dmg.sh      # 生成 dist/ 下 DMG + SHA256
 | `AppDelegate.swift` | 生命周期、主菜单/关于(版本号从 Bundle 的 `CFBundleShortVersionString` 读取，勿硬编码)、Dock 图标、状态栏控制器、启动形态判定、**启动静默检查更新 + 菜单「检查更新…」** |
 | `MainWindowController.swift` | `NSWindow` + `NSTabView`（信息/传感器/状态栏 三标签）、**窗口高度自适应**；启动枚举多卡并注入选中回调 |
 | `GPUModels.swift` | `GPUInfo`（静态，含每卡唯一键 `registryID`/`pciLocation`）与 `GPUStats`（传感器）数据模型 |
-| `GPUReader.swift` | **IOKit 读取核心**：多卡枚举 `readAllInfos()` + 按卡传感器 `readStats(pciRegistryID:)` + PCIe + Metal + 品牌兜底 |
+| `GPUReader.swift` | 已并入 `GPUProvider.swift`（`enum GPUReader` 门面）与 `AMDGPUProvider.swift`（AMD 的 IOKit 实现） |
 | `GPUSelection.swift` | **多卡选中源单例**：卡列表 + 当前 `registryID`，联动信息页/传感器页/状态栏 |
-| `GPUProvider.swift` / `AMDGPUProvider` / `AppleSiliconGPUProvider` / `IntelGPUProvider` / `CompositeGPUProvider` | GPU 数据源协议与各实现；Intel Mac 用 `Composite([AMD, Intel])` 聚合独显+核显，按 `registryID` 路由 |
+| `GPUProvider.swift` / `AMDGPUProvider` / `AppleSiliconGPUProvider` / `IntelGPUProvider` / `CompositeGPUProvider` | GPU 数据源协议与各实现；Intel Mac 用 `Composite([AMD, Intel])` 聚合独显+核显，按 `registryID` 路由。`GPUProvider.swift` 内另有 `AcceleratorCache`（accelerator 句柄缓存）与 `kIOPortDefault`（替代已废弃的 `kIOMasterPortDefault`） |
 | `SMCClient.swift` | 真·SMC 读取器（80 字节缓冲+明确偏移），核显场景读 CPU 温度(TC0P)/风扇(F0Ac)/功耗(PCPT,sp96)，免 root |
-| `PowermetricsHelper.swift` | 提权 `powermetrics` 数据泵：Apple Silicon GPU 功耗/频率；Intel CPU 实时频率（核显核心频率的 C 方案，A 兜底为标称频率） |
+| `IOReportGPUSampler.swift` | **Apple Silicon 免 root 功耗/频率采集**：`IOReport` 私有框架，`Energy Model` 组的 GPU 能耗差 ÷ 时间差 = 功耗，`GPU Performance States` 的 P-State 驻留 × pmgr `voltage-states9` 频率表 = 活跃频率 |
+| `PowermetricsHelper.swift` | **仅 Intel**：以常驻单实例的提权 `powermetrics` 采 CPU 实时频率（核显核心频率的 C 方案，A 兜底标称）；含旧版残留 root 进程的一次性清理 |
 | `VBIOSDecoder.swift` | 从 VBIOS 二进制抽取料号/ATOMBIOS/日期/板卡/子系统/颗粒厂商/品牌 |
 | `DeviceDatabase.swift` | **device-id → 芯片规格**（系统读不到的着色器/位宽/die 等）；**子系统厂商 ID → AIB 品牌** |
 | `InfoTabViewController.swift` | 信息页：GPU-Z 式版式，右键复制/hover 展开/导出；**底部「导出 VBIOS」右侧的显卡切换下拉框** |
@@ -192,11 +193,13 @@ ioreg -rw0 -c IOPCIDevice | grep -o '"ATY,bin_image" = <[0-9a-f]*>' | head -1 \
 
 ## 12. 【v1.4.0】Apple Silicon 架构与授权引擎
 
+> 注：本节的提权 helper 已在 `v1.5.1` 被 `IOReport` 免提权采集取代，保留此节仅为说明演进过程，勿照此重新引入提权。
+
 为支持 M 芯片的获取，本次重构了底层获取方式：
 - **`GPUProvider.swift`**：统一的双端协议抽象。
 - **`AppleSiliconGPUProvider.swift`**：免 Root 读取 Metal 特性、系统内存带宽以及 PMU `tdie` SoC 综合温度。
-- **UI 动态降级与内联授权**：将原本无法无权读取的“显存频率、风扇”平滑回退为 `-`，而在“核心频率、功耗”项置入原生的 `NSButton(bezelStyle: .inline)` 授权按钮。
-- **`PowermetricsHelper.swift`**：通过 `NSAppleScript` 和底层 `powermetrics` C 接口，以极高频 (1000ms) 搭建数据泵。并利用事件总线 `NotificationCenter` 在授权过审的毫秒内实现前端 UI 界面的重绘（消除轮询卡顿感）。
+- **UI 动态降级**：将无法读取的“显存频率、风扇”平滑回退为 `-`。
+- ~~**`PowermetricsHelper.swift`**：`NSAppleScript` 提权后驻留 `powermetrics` 数据泵~~（v1.5.1 起 Apple Silicon 不再走此路径）。
 
 ## 13. 【v1.5.0】Intel 核显 (iGPU) 支持 + 状态栏显卡选择
 
@@ -213,3 +216,48 @@ ioreg -rw0 -c IOPCIDevice | grep -o '"ATY,bin_image" = <[0-9a-f]*>' | head -1 \
 - **踩坑**：①`SMCReader`（那个基于 IOHIDEvent 读 SoC 温度的）与新 `SMCClient`（真 AppleSMC）不是一回事，勿混名；②真 SMC 读取的 `SMCKeyData` 必须是 **80 字节**，用固定字节缓冲+偏移（key@0,data8@42,dataSize@28,dataType@32,result@40,bytes@48）最稳，Swift 结构体镜像易因对齐算错（曾错成 76 字节导致全部读不到）；③`MTLGPUFamily.apple9` 旧 SDK 无此枚举 → 用 `MTLGPUFamily(rawValue: 1009)` 规避编译失败。
 
 **状态栏显卡选择**——`StatusBarSettings.gpuRegistryID`（nil=跟随主界面选择，否则指定卡 registryID）；「状态栏」页在**多卡时**出现「状态栏显示：」下拉；`StatusBarController.statusStats()` 按此取数，卡不存在时回退跟随。
+
+## 14. 【v1.5.1】免提权采集 + 性能与安全重构（必读）
+
+起因：M 芯片机器上长时间开着状态栏后出现**鼠标严重不跟手**。实测 `WindowServer` 涨到 76% CPU / 985MB 内存，退出应用后立刻恢复；同时发现一个 **root 后台循环脱离应用生命周期长期存活**（父进程被 `launchd` 收养，一天多 fork 出 9 万个 `powermetrics`）。
+
+### 14.1 用 IOReport 取代提权 powermetrics（Apple Silicon）
+
+`powermetrics` 自身就是基于 `IOReport` 的，而 IOReport 的 GPU 通道**普通用户可读**，于是提权、子进程、临时文件三层依赖一次性全部去掉。实现见 `IOReportGPUSampler.swift`：
+
+- 动态 `dlopen("/usr/lib/libIOReport.dylib")` 取 `IOReportCopyChannelsInGroup` / `CreateSubscription` / `CreateSamples` / `CreateSamplesDelta` 等符号。
+- **功耗**：`Energy Model` 组的 `GPU Energy`（AGX，nJ）优先，回退 `GPU`（PMGR，mJ）；两次采样能量差 ÷ 时间差 = 瓦特。
+- **频率**：`GPU Stats / GPU Performance States` 的 `GPUPH` 通道给出 `OFF/P1…P15` 驻留计数，用 pmgr(`AppleARMIODevice` 下名为 `pmgr` 的节点) 的 `voltage-states9` 频率表（本机 13 档：0/338/486/…/1578 MHz）加权平均。全程 OFF 时报 0，与 powermetrics 的 active frequency 语义一致。
+- 只订阅需要的通道（`Energy Model` 一组有 167 个通道，全订等于白采）。
+- **踩坑（重要）**：
+  1. IOReport 的取值函数会**写回**传入的字典，把 samples 桥接成 Swift `[[String: Any]]` 再传回去会 `unrecognized selector` 崩溃 → 必须用 `CFDictionaryGetValue`/`CFArrayGetValueAtIndex` 原生遍历。
+  2. `IOReportCreateSamples`/`CreateSamplesDelta` 是 **+1 retained**，`@convention(c)` 返回类型要写 `Unmanaged<CFDictionary>?` 再 `takeRetainedValue()`，否则 1Hz 采样会持续泄漏字典。
+
+### 14.2 生命周期：不允许任何进程活过应用
+
+- Apple Silicon 路径**不再启动任何子进程**；Intel 的 `powermetrics` 改为**常驻单实例**（原来每 1.5s 冷启一个），输出写到用户私有临时目录（原来写全局可写的 `/tmp`，`echo > x.sh && chmod +x && 执行` 存在 TOCTOU 提权窗口），并挂一个 `while kill -0 <appPID>` 的 watchdog：应用一消失就 `kill` 采样进程并删文件。
+- `AppDelegate.applicationWillTerminate` 调 `PowermetricsHelper.shared.stop()`。
+- `isAuthorized` 从「文件存在」改成**真心跳**：输出文件 mtime 落后 8s 即视为失效并降级回未授权。
+- **旧版残留清理**：检测到 `/tmp/mac_gpu_helper.sh` 时启动首个窗口后弹一次性提示，用户确认后提权 `pkill` 并删文件（`PowermetricsHelper.cleanupLegacyLeftovers`）。老版本用户升级后必须走一次，否则那个 root 循环会一直在。
+
+### 14.3 状态栏与定时器（WindowServer 高负载的直接来源）
+
+- `StatusBarController`：数值未变化时**不重绘**（`[Column]` 等值比较）；字体与 attributes 提为 `static let`；`lockFocus` 改成 `NSImage(size:flipped:drawingHandler:)` 惰性绘制；监听 `NSApplication.didChangeOcclusionStateNotification`，菜单栏被遮挡/息屏时跳过采集与重绘（`menuWillOpen` 时强制补一次）。
+- `SensorsTabViewController`：定时器从 `Timer(timeInterval:target:selector:)` 换成 **block 版 + `[weak self]`**（原写法 Timer 强引用 target，ViewController 永不 `deinit`，`invalidate` 永远等不到）；新增 `stop()`，由 `MainWindowController.windowWillClose` 调用、`showWindow` 时恢复——窗口关闭后不再空转 1Hz 采集与六张曲线重绘。
+- `SensorGraphView` 的图例/备注/刻度 attributes 同样静态化。
+
+### 14.4 采集层
+
+- `AcceleratorCache`：accelerator 句柄按 PCI `registryID` 缓存，替掉每次 `readStats` 的 `IOServiceGetMatchingServices` 全量枚举 + 子树递归；读属性失败（休眠恢复/eGPU 拔出）时失效重建。Apple Silicon 的 `AGXAccelerator` 句柄用 `static let` 常驻。
+- `MTLCreateSystemDefaultDevice()` / `MTLCopyAllDevices()` / Metal 支持等级 → `static let` 只取一次。
+- `SMCReader`（IOHIDEvent 读 SoC 温度）：client 与服务列表建一次常驻，事件对象改为 `takeRetainedValue()` 交给 ARC（原来每次采集都新建 client 且事件不释放）。
+  **踩坑**：`IOHIDEventSystemClient` 必须作为实例属性持有——只留 service 指针而让 client 被 ARC 释放，取事件时会在 `IOMIGMachPortGetPort` 处 SIGSEGV（本次已实测踩到）。
+- `kIOMasterPortDefault` 自 macOS 12 废弃，但新名 `kIOMainPortDefault` 带 12.0 可用性标注、与本项目 11.0 部署目标冲突 → 统一用 `let kIOPortDefault: mach_port_t = 0`（两者取值都是 `MACH_PORT_NULL`）。
+
+### 14.5 验收口径
+
+```bash
+ps -Ao pid,ppid,user,command | grep -iE "powermetrics|mac_gpu_helper"   # 退出应用后应无残留
+ls /tmp | grep -i mac_gpu                                              # 应为空
+```
+Apple Silicon 正常路径**不应再出现管理员密码框**（只有旧版残留清理和 Intel 授权按钮会弹）。

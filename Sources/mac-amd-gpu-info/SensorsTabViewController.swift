@@ -10,7 +10,6 @@ final class SensorsTabViewController: NSViewController {
     }
 
     private let topView = FlippedView()
-    private var isAppleSilicon = false
     private var isIntegrated = false
     private var authButtons: [NSButton] = []
     private var metrics: [Metric] = []
@@ -77,7 +76,6 @@ final class SensorsTabViewController: NSViewController {
     /// 主窗口下拉框切换显卡时调用：更新目标卡与显存上限并立即刷新。
     func setSelectedGPU(_ info: GPUInfo?) {
         selectedRegistryID = info?.registryID
-        isAppleSilicon = info?.isAppleSilicon ?? false
         isIntegrated = info?.isIntegrated ?? false
         vramTotalMB = Double(info?.vramMB ?? 4096)
         guard isViewLoaded else { return }
@@ -124,21 +122,11 @@ final class SensorsTabViewController: NSViewController {
             topView.addSubview(lab)
             m.box.frame = NSRect(x: x + 44, y: yy, width: cellW - 50, height: 21)
             topView.addSubview(m.box)
-            
-            if isAppleSilicon && (m.label == "核心频率" || m.label == "功耗") {
-                // Apple Silicon：未授权时数值置空，锁按钮覆盖在数值位置
-                let btn = makeAuthButton()
-                if #available(macOS 11.0, *) {
-                    btn.frame = NSRect(x: x + 44, y: yy + 1, width: 75, height: 18)
-                } else {
-                    btn.frame = NSRect(x: x + 46, y: yy + 3, width: 60, height: 15)
-                }
-                topView.addSubview(btn)
-                authButtons.append(btn)
-            } else if isIntegrated && m.label == "核心频率" {
+
+            if isIntegrated && m.label == "核心频率" {
                 // 核显：保留标称频率（A 兜底），锁按钮放右侧不遮挡；授权后升级为 CPU 实时频率
                 m.box.frame = NSRect(x: x + 44, y: yy, width: max(cellW - 50 - 22, 30), height: 21)
-                let btn = makeAuthButton(iconOnly: true)
+                let btn = makeAuthButton()
                 btn.frame = NSRect(x: x + cellW - 28, y: yy + 1, width: 22, height: 18)
                 topView.addSubview(btn)
                 authButtons.append(btn)
@@ -146,16 +134,28 @@ final class SensorsTabViewController: NSViewController {
         }
     }
 
+    /// 幂等：窗口反复显示/关闭时不会叠加定时器。
     func start() {
+        guard timer == nil else { return }
         refresh()
-        let t = Timer(timeInterval: 1.0, target: self, selector: #selector(refresh), userInfo: nil, repeats: true)
+        // block 版 + weak self：target-selector 版会强引用 self，导致 ViewController 永不释放。
+        let t = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in self?.refresh() }
         RunLoop.main.add(t, forMode: .common)
         timer = t
-        
-        NotificationCenter.default.addObserver(self, selector: #selector(refresh), name: NSNotification.Name("PowermetricsAuthorized"), object: nil)
+
+        NotificationCenter.default.addObserver(self, selector: #selector(refresh),
+                                               name: PowermetricsHelper.authorizedNotification, object: nil)
     }
-    
+
+    /// 窗口关闭时调用：停掉 1Hz 采集与六张曲线的重绘。
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        NotificationCenter.default.removeObserver(self, name: PowermetricsHelper.authorizedNotification, object: nil)
+    }
+
     deinit {
+        timer?.invalidate()
         NotificationCenter.default.removeObserver(self)
     }
 
@@ -164,14 +164,9 @@ final class SensorsTabViewController: NSViewController {
         let stats = selectedRegistryID.map { GPUReader.readStats(pciRegistryID: $0) } ?? GPUReader.readStats()
         let isAuth = PowermetricsHelper.shared.isAuthorized
         authButtons.forEach { $0.isHidden = isAuth }
-        
+
         for m in metrics {
-            var v = stats.map { m.get($0) } ?? "-"
-            if isAppleSilicon {
-                if !isAuth && (m.label == "核心频率" || m.label == "功耗") {
-                    v = ""
-                }
-            }
+            let v = stats.map { m.get($0) } ?? "-"
             m.box.stringValue = v
             m.box.toolTip = v
         }
@@ -183,14 +178,15 @@ final class SensorsTabViewController: NSViewController {
         gFan.push([s.fanRPM.map(Double.init)])
         gVRAM.push([s.vramInUseMB.map(Double.init)])
     }
-    private func makeAuthButton(iconOnly: Bool = false) -> NSButton {
-        let btn = NSButton(title: iconOnly ? "" : "点击授权", target: self, action: #selector(doAuth))
+
+    private func makeAuthButton() -> NSButton {
+        let btn = NSButton(title: "", target: self, action: #selector(doAuth))
         btn.bezelStyle = .inline
         btn.font = NSFont.systemFont(ofSize: 10)
         btn.toolTip = "授权以采集 CPU 实时频率"
         if #available(macOS 11.0, *) {
             btn.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "授权实时频率")
-            btn.imagePosition = iconOnly ? .imageOnly : .imageLeft
+            btn.imagePosition = .imageOnly
         }
         return btn
     }

@@ -11,7 +11,7 @@ struct AMDGPUProvider: GPUProvider {
     func readAllInfos() -> [GPUInfo] {
         var result: [GPUInfo] = []
         var it: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMasterPortDefault,
+        guard IOServiceGetMatchingServices(kIOPortDefault,
                                            IOServiceMatching("IOPCIDevice"), &it) == KERN_SUCCESS else {
             return result
         }
@@ -120,7 +120,7 @@ struct AMDGPUProvider: GPUProvider {
     /// 正常路径请用 readStats(pciRegistryID:) 精确读取选中卡，避免多卡串号。
     func readStats() -> GPUStats? {
         var it: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMasterPortDefault,
+        guard IOServiceGetMatchingServices(kIOPortDefault,
                                            IOServiceMatching("IOAccelerator"), &it) == KERN_SUCCESS else {
             return nil
         }
@@ -144,30 +144,39 @@ struct AMDGPUProvider: GPUProvider {
     }
 
     /// 读取指定 PCI 卡（按 registryID）的传感器：定位该 PCI 节点后向下遍历子树找到它自己的 accelerator。
+    /// accelerator 句柄进缓存，后续采集直接读属性；读失败（热插拔/休眠恢复）时失效重建。
     func readStats(pciRegistryID: UInt64) -> GPUStats? {
+        if let cached = AcceleratorCache.shared.service(for: pciRegistryID) {
+            if let perf = perfStats(cached) { return parseStats(perf) }
+            AcceleratorCache.shared.invalidate(pciRegistryID)
+        }
+
         var it: io_iterator_t = 0
-        guard IOServiceGetMatchingServices(kIOMasterPortDefault,
+        guard IOServiceGetMatchingServices(kIOPortDefault,
                                            IORegistryEntryIDMatching(pciRegistryID), &it) == KERN_SUCCESS else {
             return nil
         }
         defer { IOObjectRelease(it) }
         let pci = IOIteratorNext(it)
         defer { if pci != 0 { IOObjectRelease(pci) } }
-        guard pci != 0 else { return nil }
-        return acceleratorStats(under: pci)
+        guard pci != 0, let accel = findAccelerator(under: pci) else { return nil }
+        AcceleratorCache.shared.store(accel, for: pciRegistryID)
+        guard let perf = perfStats(accel) else { return nil }
+        return parseStats(perf)
     }
 
-    /// 在给定节点的子树（IOService 平面）中查找 AMD accelerator 并读 PerformanceStatistics。
-    private func acceleratorStats(under node: io_object_t) -> GPUStats? {
-        if let cls = ioClassName(node), isAMDAccelerator(cls), let perf = perfStats(node) {
-            return parseStats(perf)
+    /// 在给定节点的子树（IOService 平面）中查找 AMD accelerator。返回值已 retain，由调用方接管。
+    private func findAccelerator(under node: io_object_t) -> io_object_t? {
+        if let cls = ioClassName(node), isAMDAccelerator(cls), perfStats(node) != nil {
+            IOObjectRetain(node)
+            return node
         }
         var child: io_iterator_t = 0
         guard IORegistryEntryGetChildIterator(node, kIOServicePlane, &child) == KERN_SUCCESS else { return nil }
         defer { IOObjectRelease(child) }
         var c = IOIteratorNext(child)
         while c != 0 {
-            if let s = acceleratorStats(under: c) { IOObjectRelease(c); return s }
+            if let found = findAccelerator(under: c) { IOObjectRelease(c); return found }
             IOObjectRelease(c)
             c = IOIteratorNext(child)
         }
@@ -246,7 +255,8 @@ struct AMDGPUProvider: GPUProvider {
         return "PCIe ×\(width) @ \(sp)"
     }
 
-    private func metalSupport() -> String? {
+    /// Metal 支持等级是静态信息，进程内采集一次即可（MTLCreateSystemDefaultDevice 开销不小）。
+    private static let metalSupportLabel: String? = {
         guard let dev = MTLCreateSystemDefaultDevice() else { return nil }
 #if arch(arm64)
         if #available(macOS 15.0, *) {
@@ -258,5 +268,7 @@ struct AMDGPUProvider: GPUProvider {
             if dev.supportsFamily(.metal3) { return "Metal 3" }
         }
         return "Metal (\(dev.name))"
-    }
+    }()
+
+    private func metalSupport() -> String? { Self.metalSupportLabel }
 }

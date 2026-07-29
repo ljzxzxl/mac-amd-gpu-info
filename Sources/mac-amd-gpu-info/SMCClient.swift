@@ -12,7 +12,7 @@ enum SMCClient {
     private static func ensureOpen() -> Bool {
         if opened { return conn != 0 }
         opened = true
-        let svc = IOServiceGetMatchingService(kIOMasterPortDefault, IOServiceMatching("AppleSMC"))
+        let svc = IOServiceGetMatchingService(kIOPortDefault, IOServiceMatching("AppleSMC"))
         guard svc != 0 else { return false }
         defer { IOObjectRelease(svc) }
         return IOServiceOpen(svc, mach_task_self_, 0, &conn) == KERN_SUCCESS

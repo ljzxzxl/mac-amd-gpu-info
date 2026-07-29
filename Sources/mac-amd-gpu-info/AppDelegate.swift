@@ -5,7 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusBar: StatusBarController!
     private let appName = "Mac GPU Info"
     // 版本号统一从 Bundle 的 CFBundleShortVersionString 读取，避免与 Info.plist/VERSION 漂移。
-    private let versionString = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.4.0"
+    private let versionString = (Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String) ?? "1.5.1"
 
     private var isCheckingUpdate = false
 
@@ -14,13 +14,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-
-        // 启动时静默启动提权或请求提权（仅在 Apple Silicon 上）
-        // Apple Silicon 启动时自动申请提权采集；Intel 核显走按钮按需授权，避免每次启动弹窗
-        if AppleSiliconGPUProvider.isSupported() {
-            PowermetricsHelper.shared.startIfNeeded()
-        }
-
         if let path = Bundle.main.path(forResource: "AppIcon", ofType: "png"),
            let img = NSImage(contentsOfFile: path) {
             NSApp.applicationIconImage = img
@@ -37,10 +30,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.setActivationPolicy(.accessory)
         } else {
             showMainWindow()
+            // 旧版 helper 会被 launchd 收养后永久残留，只在有窗口时提示，避免后台启动弹模态框
+            if PowermetricsHelper.hasLegacyLeftovers { promptLegacyCleanup() }
         }
 
         // 启动静默检查更新（仅在有新版时弹窗）
         checkForUpdates(silent: true)
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        PowermetricsHelper.shared.stop()
+    }
+
+    /// 一次性迁移清理：v1.5.1 之前每次开机都会新增一个无法自行回收的 root 采集循环。
+    private func promptLegacyCleanup() {
+        let alert = NSAlert()
+        alert.messageText = "检测到旧版本残留的后台进程"
+        alert.informativeText = "v1.5.1 之前的版本会留下以 root 运行的 powermetrics 采集循环，它不随应用退出而结束，"
+            + "并会持续占用 CPU。新版本已改为免提权采集，不再产生此类进程。\n是否立即清理残留？（需要输入管理员密码）"
+        alert.addButton(withTitle: "立即清理")
+        alert.addButton(withTitle: "以后再说")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        PowermetricsHelper.cleanupLegacyLeftovers { [weak self] ok in
+            self?.info(ok ? "已清理旧版本残留的后台进程与临时文件。"
+                          : "清理未完成，可在终端执行：\nsudo pkill -f '[m]ac_gpu_helper'")
+        }
     }
 
     private func showMainWindow() {
